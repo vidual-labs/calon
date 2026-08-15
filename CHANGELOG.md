@@ -24,6 +24,12 @@ per user-visible change, describing the effect rather than the implementation.
   running ruff, mypy, and pytest.
 - Example operator configuration (`config/calon.example.toml`) documenting every planned
   scheduling rule, and `.env.example` for runtime settings.
+- The scheduling engine that decides whether a booking request can be accepted: it applies
+  minimum notice, the advance-booking horizon, allowed weekdays, the daily window, blackout
+  periods, an optional per-day cap, and conflicts with existing bookings including their
+  buffers. A rejection explains every rule that failed, not just the first, and offers up
+  to three next-available alternatives in the requester's own timezone. Not yet reachable
+  over HTTP — see the roadmap.
 
 ### Changed
 

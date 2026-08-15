@@ -1,0 +1,87 @@
+"""The pure scheduling core.
+
+Nothing in this package imports SQLAlchemy, FastAPI, or the filesystem, and nothing reads
+the wall clock — ``now`` is always a parameter. That is what makes the scheduling logic
+unit-testable with no fixtures and no database, and it is the one architectural rule in
+calon that is not negotiable (``CLAUDE.md`` §4).
+
+The public surface is ``decide``: one request in, one ``Decision`` out, alternatives
+attached when the answer was no.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import datetime
+
+from calon.domain.availability import (
+    AvailabilityPolicy,
+    BlackoutPeriod,
+    BookedSpan,
+    Resource,
+)
+from calon.domain.decision import (
+    Decision,
+    DecisionCode,
+    Outcome,
+    SlotSuggestion,
+    Violation,
+)
+from calon.domain.rules import BookingRequest, evaluate, resolve_end
+from calon.domain.slots import MAX_SUGGESTIONS, suggest_slots
+
+__all__ = [
+    "MAX_SUGGESTIONS",
+    "AvailabilityPolicy",
+    "BlackoutPeriod",
+    "BookedSpan",
+    "BookingRequest",
+    "Decision",
+    "DecisionCode",
+    "Outcome",
+    "Resource",
+    "SlotSuggestion",
+    "Violation",
+    "decide",
+    "evaluate",
+    "resolve_end",
+    "suggest_slots",
+]
+
+
+def decide(
+    request: BookingRequest,
+    *,
+    resource: Resource,
+    policy: AvailabilityPolicy,
+    now: datetime,
+    blackouts: Sequence[BlackoutPeriod] = (),
+    existing: Sequence[BookedSpan] = (),
+    limit: int = MAX_SUGGESTIONS,
+) -> Decision:
+    """Evaluate a request and, on a rejection worth answering, propose alternatives.
+
+    Suggestions are skipped when the request was structurally unusable — there is no "next
+    available" for a question that could not be asked.
+    """
+    decision = evaluate(
+        request,
+        resource=resource,
+        policy=policy,
+        now=now,
+        blackouts=blackouts,
+        existing=existing,
+    )
+    if not decision.is_searchable:
+        return decision
+    return decision.with_suggestions(
+        suggest_slots(
+            request,
+            resource=resource,
+            policy=policy,
+            now=now,
+            blackouts=blackouts,
+            existing=existing,
+            limit=limit,
+        )
+    )
