@@ -1,0 +1,131 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "calon"
+description = "A lean, self-hostable booking intake tool with generic calendar handoff."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Vidual Labs" }]
+keywords = ["booking", "scheduling", "calendar", "ics", "icalendar", "self-hosted"]
+dynamic = ["version"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Framework :: FastAPI",
+  "Intended Audience :: System Administrators",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business :: Scheduling",
+  "Typing :: Typed",
+]
+
+dependencies = [
+  "fastapi[standard]>=0.115",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.5",
+  "sqlalchemy>=2.0",
+  "alembic>=1.13",
+  "jinja2>=3.1",
+  "icalendar>=6.0",
+  # Guarantees the IANA timezone database exists inside slim containers.
+  "tzdata>=2024.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/vidual-labs/calon"
+Repository = "https://github.com/vidual-labs/calon"
+Changelog = "https://github.com/vidual-labs/calon/blob/main/CHANGELOG.md"
+Issues = "https://github.com/vidual-labs/calon/issues"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-cov>=5.0",
+  "httpx>=0.27",
+  # Scheduling logic is untestable without freezing "now".
+  "time-machine>=2.15",
+  "ruff>=0.7",
+  "mypy>=1.13",
+]
+
+[tool.hatch.version]
+path = "src/calon/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/calon"]
+
+# ---------------------------------------------------------------------------
+# ruff — linting and formatting (replaces black, isort, and flake8)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",   # pycodestyle
+  "F",        # pyflakes
+  "I",        # isort
+  "N",        # pep8-naming
+  "UP",       # pyupgrade
+  "B",        # flake8-bugbear
+  "C4",       # flake8-comprehensions
+  "DTZ",      # flake8-datetimez — naive datetimes are a bug in this project
+  "SIM",      # flake8-simplify
+  "PTH",      # flake8-use-pathlib
+  "RUF",      # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use naive datetimes in fixtures and assert on private helpers.
+"tests/**" = ["DTZ"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["calon"]
+
+# ---------------------------------------------------------------------------
+# mypy — strict where the logic is, pragmatic at the edges
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_return_any = true
+
+# The domain layer is pure and carries all the scheduling logic, so it is held to a
+# stricter standard than the I/O edges around it.
+[[tool.mypy.overrides]]
+module = "calon.domain.*"
+strict = true
+disallow_any_explicit = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-q --strict-markers --strict-config"
+markers = [
+  "integration: exercises the app through HTTP and the database",
+]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["src/calon"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]

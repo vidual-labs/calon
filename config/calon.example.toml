@@ -1,0 +1,142 @@
+# ---------------------------------------------------------------------------
+# calon operator configuration
+#
+# Copy this file to config/calon.toml and edit it. calon reads it at startup;
+# restart the service after changing it.
+#
+# This file is the source of truth for scheduling rules. There is no admin UI
+# in the MVP, which is deliberate: no admin UI means no login, no sessions, and
+# no password storage anywhere in calon. It also means your rules are a plain
+# text file you can diff, review, and keep in a private repository.
+#
+# config/calon.toml is git-ignored, because the [sources] section holds shared
+# secrets. Never commit it.
+# ---------------------------------------------------------------------------
+
+[instance]
+# Shown on the public booking form.
+name = "calon"
+
+# Fallback display timezone for the UI. Individual resources set their own.
+# Must be an IANA timezone name (e.g. "Europe/Berlin", not "CET").
+timezone = "Europe/Berlin"
+
+
+# ---------------------------------------------------------------------------
+# The bookable resource — a person, a room, a service.
+#
+# The MVP ships with exactly one. The data model carries a resource reference
+# everywhere, so supporting several later is a data change rather than a
+# refactor. This is NOT multi-tenancy: there are no accounts and no isolation
+# boundary between resources.
+# ---------------------------------------------------------------------------
+[resource]
+slug = "default"
+name = "Consultation"
+
+# The timezone the rules below are expressed in. All the hours, weekdays, and
+# blackout dates in this file are interpreted in THIS timezone, regardless of
+# where the requester is. calon converts to UTC internally and back to the
+# requester's timezone for display.
+timezone = "Europe/Berlin"
+
+
+# ---------------------------------------------------------------------------
+# Availability rules
+#
+# Evaluated as an ordered chain. The first rule a request fails determines the
+# decision code it is rejected with; all violations are still reported.
+# ---------------------------------------------------------------------------
+[availability]
+
+# Days bookings may start on. 0 = Monday … 6 = Sunday.
+allowed_weekdays = [0, 1, 2, 3, 4]
+
+# The daily booking window, in the resource timezone, 24-hour "HH:MM".
+# A booking must start AND end inside this window; a request that would run
+# past window_end is rejected rather than truncated.
+window_start = "09:00"
+window_end   = "17:00"
+
+# Duration applied when a request does not specify an end time, in minutes.
+default_duration_min = 30
+
+# Candidate start times are aligned to this grid, in minutes. Also the step
+# used when searching for the next available slot to suggest.
+slot_granularity_min = 15
+
+# How far in advance a booking must be made, in minutes. A request for a slot
+# sooner than this is rejected with BELOW_MIN_NOTICE.
+# 120 = two hours' notice.
+min_notice_min = 120
+
+# How far into the future bookings are accepted, in days. Beyond this, a
+# request is rejected with BEYOND_MAX_ADVANCE.
+max_advance_days = 60
+
+# Protected time around every booking, in minutes. Buffers do not appear in the
+# calendar event — they only widen the span used for conflict detection, so
+# back-to-back bookings cannot be squeezed together.
+buffer_before_min = 0
+buffer_after_min  = 15
+
+# Optional cap on accepted bookings per calendar day. Comment out for no limit.
+# max_bookings_per_day = 8
+
+
+# ---------------------------------------------------------------------------
+# Blackout periods — holidays, leave, or any time that is closed regardless of
+# the rules above. Dates and times are in the resource timezone.
+#
+# Use `date` for a whole day, or `start`/`end` for part of one.
+# ---------------------------------------------------------------------------
+[[blackout]]
+date = "2026-12-24"
+reason = "Christmas Eve"
+
+[[blackout]]
+date = "2026-12-25"
+reason = "Christmas Day"
+
+[[blackout]]
+start = "2026-12-31T12:00:00"
+end   = "2026-12-31T23:59:59"
+reason = "New Year's Eve, afternoon only"
+
+
+# ---------------------------------------------------------------------------
+# The calendar handoff shown to a requester once a booking is accepted.
+#
+# calon does not write to anyone's calendar. It produces an .ics file that
+# every major calendar accepts, plus one-click deeplinks for Google Calendar
+# and Outlook / Microsoft 365 as a convenience.
+# ---------------------------------------------------------------------------
+[calendar]
+event_title = "Consultation with {requester_name}"
+location = ""
+
+# Optional ORGANIZER on the generated event. Leave the email empty to omit it.
+organizer_name = ""
+organizer_email = ""
+
+
+# ---------------------------------------------------------------------------
+# External intake sources (optional, and off by default).
+#
+# calon is standalone first: it is fully usable with this whole section absent.
+# Enabling a source lets an external system POST booking requests to
+# /api/v1/intake/<slug>. A source adapter translates that system's payload into
+# calon's canonical booking intent — and that is all it does. Adapters never
+# make scheduling decisions; every request, native or external, is judged by
+# the same rules above.
+#
+# `secret` is a shared secret used to verify the HMAC-SHA256 signature of each
+# incoming request. Generate one with: openssl rand -hex 32
+#
+# OpenFlow below is an EXAMPLE of an external source, not a dependency and not
+# a special case. Provider-specific adapters ship after 0.1.0.
+# ---------------------------------------------------------------------------
+# [sources.openflow]
+# enabled = true
+# secret = "replace-me-with-a-long-random-value"
+# resource_slug = "default"
