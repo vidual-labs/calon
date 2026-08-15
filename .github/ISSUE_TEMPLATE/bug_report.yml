@@ -1,0 +1,70 @@
+name: Bug report
+description: Something in calon behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For scheduling bugs, the single most useful thing you can
+        give us is the **request**, the **rules in effect**, and the **decision calon
+        returned** — that triple is usually enough to reproduce the problem exactly.
+
+  - type: input
+    id: version
+    attributes:
+      label: calon version or commit
+      placeholder: "0.1.0, or a commit SHA"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did calon do, and what did you expect it to do instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: booking-request
+    attributes:
+      label: The booking request
+      description: >
+        The requested start and end, the requester's timezone, and how it was submitted
+        (native form, API, or an external source).
+      render: json
+
+  - type: textarea
+    id: rules
+    attributes:
+      label: Operator rules in effect
+      description: >
+        The relevant part of your `config/calon.toml` — allowed weekdays, window hours,
+        timezone, notice, advance window, buffers, blackouts. **Remove any secrets.**
+      render: toml
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: The decision calon returned
+      description: The decision code, reason, and any violations.
+      render: json
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Any error output or stack trace. Remove personal data.
+      render: shell
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running calon?
+      options:
+        - Docker Compose
+        - Docker (standalone container)
+        - Local development (uv / uvicorn)
+        - Other
+    validations:
+      required: true
