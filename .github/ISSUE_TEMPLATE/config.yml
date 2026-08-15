@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/vidual-labs/calon/security/advisories/new
+    about: Please report security issues privately, never in a public issue.
+  - name: Question or idea
+    url: https://github.com/vidual-labs/calon/discussions
+    about: For open-ended questions and ideas that are not yet a concrete proposal.

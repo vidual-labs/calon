@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose a change to calon
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you write this up:** calon's scope is deliberately narrow. It is a booking
+        intake tool — capture, decide, hand off to a calendar, log. It is not a CRM, a
+        reservation suite, an automation platform, or a calendar sync engine.
+
+        Ideas that cross those boundaries are usually good ideas for a *different* tool
+        that talks to calon over its API. See the boundary list in the README.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that calon makes hard or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should calon do instead?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This is not a CRM, reservation-suite, automation-platform, or AI feature
+          required: true
+        - label: >
+            This does not make an external service or lead source required for the core
+            booking flow (calon is standalone first)
+          required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: >
+        Including whether this could live outside calon, as a separate service calling its
+        API.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
