@@ -1,9 +1,10 @@
 # Domain model
 
-> Status: partially built. The decision types and the rule chain exist as of phase 1; the
-> Pydantic schemas and the tables are still planned. This document is the reference the
-> implementation is built against, and must be kept current as schemas change
-> (see `CLAUDE.md` §7).
+> Status: built as of phase 2. The decision types, the rule chain, the Pydantic schemas and
+> every table below exist. The only fields not yet written by anything are `ics_uid` and
+> `ics_sequence` (phase 3) and `idempotency_key` (phase 5); both ship in the first
+> migration on purpose. This document is the reference the implementation is built against,
+> and must be kept current as schemas change (see `CLAUDE.md` §7).
 
 Two conventions apply everywhere:
 
@@ -37,6 +38,12 @@ the only input the scheduling core understands.
 
 `metadata` is the pressure valve: anything a provider sends that calon has no concept of
 goes here untouched, rather than growing a column and a boundary violation.
+
+The model rejects unknown top-level fields, a `start` or `end` without a UTC offset, and a
+`timezone` that is not in the IANA database. All three are malformed rather than unbookable:
+they are answered with `422` and never become an intent, which keeps the audit log a record
+of real booking attempts rather than of typos. `DecisionCode.INVALID_INPUT` remains the
+backstop for a caller that builds a `BookingRequest` directly.
 
 ### `BookingRequest`
 
@@ -121,6 +128,44 @@ Each candidate is re-checked against the *complete* chain rather than a cheaper 
 suggestion that turns out to sit inside a blackout, or on top of another booking's buffer,
 is worse than offering nothing.
 
+## The HTTP contract
+
+| Endpoint | Answers with |
+| --- | --- |
+| `POST /api/v1/bookings` | `BookingResponse` — `201` when a booking was created, `200` when the request was judged and rejected |
+| `GET /api/v1/availability` | `AvailabilityResponse` |
+| `GET /healthz` | `{"status", "version"}` |
+
+A rejection is `200`, not a client error: the request was well-formed, the rules were
+applied, and the answer is on the record. `4xx` is reserved for requests calon could not
+judge at all — `422` for a malformed payload or an impossible window, `404` for a resource
+that is not there.
+
+### `BookingResponse`
+
+`intent_id` · `status` · `decision` (a `Decision`) · `booking` (a `BookingOut`, or null)
+
+`intent_id` is always present, because a rejection is a recorded outcome rather than a
+request that never happened. `BookingOut` is `{id, start, end, timezone, status}`, with
+`start` and `end` in the requester's timezone. Buffers never appear: they widen the span
+used for conflict detection and are none of the requester's business.
+
+### `AvailabilityResponse`
+
+`resource_slug` · `timezone` · `from` · `to` · `duration_min` · `evaluated_at` · `slots`
+
+Query parameters are `resource_slug`, `from`, `to`, and optionally `timezone` (defaults to
+the resource's) and `duration_min` (defaults to the policy's). `from` and `to` must carry a
+UTC offset, and the window may not exceed **31 days** — each candidate slot costs a full
+rule-chain evaluation.
+
+Slots must *finish* by `to`, so a range query never returns a slot that runs past the
+window asked about.
+
+**The response deliberately carries nothing that reads like a claim on a slot** — no token,
+no expiry, no identifier. Availability is advisory (ADR 0007); a caller that treats a query
+as a reservation will still lose the race, correctly, at submit time.
+
 ## Tables
 
 ### `resource`
@@ -197,7 +242,14 @@ conflict detection, so back-to-back bookings cannot be squeezed together.
 
 Append-only. Never updated, never deleted.
 
-`id` · `at_utc` · `actor` · `event_type` · `intent_id` · `booking_id` · `payload_json`
+`seq` · `id` · `at_utc` · `actor` · `event_type` · `intent_id` · `booking_id` ·
+`payload_json`
+
+Alone among calon's tables this one carries an integer `seq` as well as a UUID, and it is
+the primary key. The events of a single decision are written inside one transaction and
+share one timestamp by design — `now` is injected once and used throughout — so neither
+`at_utc` nor a UUIDv7 minted in the same millisecond can order them. `seq` is what makes
+the log readable in the order things actually happened; `id` remains its stable identifier.
 
 `actor` is `system`, `operator`, or `source:<slug>`.
 

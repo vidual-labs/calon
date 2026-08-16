@@ -1,7 +1,8 @@
 # Self-hosting calon
 
-> Status: planned (phase 6). Nothing here works yet — there is no release. This documents
-> the intended deployment shape so it can be reviewed before it is built.
+> Status: partly real. calon runs as of phase 2 and the configuration, database, and backup
+> sections below apply today. Docker packaging is phase 6 and does not exist yet, so the
+> `docker compose` steps are still the intended shape rather than a working command.
 
 calon is designed to run on one small server with no external services. A single container,
 a single SQLite file, and a reverse proxy in front of it.
@@ -28,7 +29,18 @@ cp config/calon.example.toml config/calon.toml
 docker compose up -d
 ```
 
-The booking form is at `/book` and the generated API reference at `/docs`.
+Until the container exists, run it directly:
+
+```bash
+make install
+make dev
+```
+
+Both copy steps are optional. With no `.env` and no `config/calon.toml`, calon starts on
+the defaults `config/calon.example.toml` documents — it is fully usable with nothing
+configured. The database file and its schema are created on first start.
+
+The generated API reference is at `/docs`. The booking form at `/book` is phase 4.
 
 ## Configuration
 
@@ -44,6 +56,15 @@ There is no admin UI, which is a deliberate simplification rather than an omissi
 UI means no login, no sessions, and no password storage anywhere in calon. Your rules are a
 plain text file you can diff, review, and keep in a private repository. Restart the service
 after changing it.
+
+**The file wins at every startup.** calon rewrites the rules it holds in the database from
+`config/calon.toml` each time it starts, so editing the file and restarting is the whole
+configuration workflow, and editing the database by hand accomplishes nothing. A file calon
+cannot understand — an unrecognised key, a window that ends before it begins, a timezone
+that is not an IANA name — **stops startup** with the offending key named, rather than being
+half-applied. Existing bookings are never touched by a rule change: a booking accepted under
+yesterday's rules stays accepted. See
+[ADR 0008](adr/0008-operator-config-is-toml-authoritative.md).
 
 ## `CALON_INSTANCE_HOST` — set it once, then leave it
 
@@ -62,6 +83,11 @@ Terminate TLS in front of calon and forward to port 8000. Anything that sets
 
 Consider restricting `/api/v1/…` at the proxy if you only need the public booking form. The
 form at `/book` is meant to be public; the API generally is not.
+
+`GET /api/v1/availability` discloses free/busy times only — never a requester, a subject, or
+any booking content. In practice it publishes nothing new, since a public booking form makes
+the same shape inferable by anyone willing to probe it. If you do not want free/busy
+readable at all, restrict it at the proxy.
 
 ## Backups
 
