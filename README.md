@@ -6,9 +6,10 @@ handoff that works with any major calendar.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-> **Status: pre-alpha.** Phase 1 is complete — the pure scheduling core (rule chain,
-> decisions, slot search) exists and is tested. There is no usable release yet: nothing is
-> reachable over HTTP and nothing is persisted, so calon cannot be run. Do not use this in
+> **Status: pre-alpha.** Phase 2 is complete — calon now runs. Booking requests can be
+> submitted over HTTP, judged against your rules, and stored; availability can be queried;
+> every decision is audited. There is still no release: an accepted booking produces a
+> decision but no calendar handoff, and there is no booking form yet. Do not use this in
 > production. See the [roadmap](#roadmap).
 
 ---
@@ -39,16 +40,16 @@ different tool that talks to calon over its API.
 
 The first release (`0.1.0`) does exactly this, end to end:
 
-- [ ] Accept a booking request from calon's own native intake flow
-- [ ] Normalize any request into one canonical **booking intent**
-- [ ] Apply booking rules and operator-defined time windows
-- [ ] Determine whether a requested slot is valid
-- [ ] Publish **which slots are free**, so a requester or an external system can pick one
+- [x] Accept a booking request from calon's own native intake flow
+- [x] Normalize any request into one canonical **booking intent**
+- [x] Apply booking rules and operator-defined time windows
+- [x] Determine whether a requested slot is valid
+- [x] Publish **which slots are free**, so a requester or an external system can pick one
       rather than guess
-- [ ] Return a structured **accept / reject decision**, with next-available suggestions
+- [x] Return a structured **accept / reject decision**, with next-available suggestions
 - [ ] Produce a generic **add-to-calendar** result that works across calendar ecosystems
 - [ ] Expose a source-agnostic intake boundary that external systems can plug into
-- [ ] Keep a minimal audit trail of every decision
+- [x] Keep a minimal audit trail of every decision
 
 **Explicit non-goals for the MVP:** no CRM, no workflow automation engine, no billing or
 payments, no deep calendar-provider write integrations, no dependency on external lead
@@ -83,27 +84,60 @@ from an external system travel the exact same path.
 
 ## Quick start
 
-> ⚠️ **Target state — not yet functional.** These are the commands the `0.1.0` release
-> will support. Nothing runs today.
+> ⚠️ **Pre-alpha.** The API below works today. Docker packaging arrives in phase 6, and the
+> booking form at `/book` in phase 4 — neither exists yet.
 
 ```bash
 git clone https://github.com/vidual-labs/calon.git
 cd calon
 cp config/calon.example.toml config/calon.toml   # set your hours, timezone, and rules
 cp .env.example .env
-docker compose up -d
-```
 
-Then open <http://localhost:8000/book> for the booking form, or
-<http://localhost:8000/docs> for the generated OpenAPI reference.
-
-For local development without Docker:
-
-```bash
 make install    # uv sync
 make dev        # uvicorn with reload
 make check      # ruff + mypy + pytest
 ```
+
+Both copy steps are optional: with no `.env` and no `config/calon.toml`, calon starts on
+the defaults `config/calon.example.toml` documents. The database is created and migrated on
+first start.
+
+Then open <http://localhost:8000/docs> for the generated OpenAPI reference.
+
+### The API
+
+```
+POST /api/v1/bookings      submit a booking request
+GET  /api/v1/availability  list free slots in a window
+GET  /healthz              liveness
+```
+
+A booking request is answered with a decision either way. `201` means a booking exists;
+`200` with `"outcome": "rejected"` means the request was judged and refused, with every
+rule it broke and up to three alternatives in the requester's own timezone:
+
+```bash
+curl -X POST localhost:8000/api/v1/bookings -H 'content-type: application/json' -d '{
+  "resource_slug": "default",
+  "start": "2026-09-02T10:00:00+02:00",
+  "timezone": "Europe/Berlin",
+  "requester": {"name": "Ada Lovelace", "email": "ada@example.com"},
+  "subject": "Initial consultation"
+}'
+```
+
+Availability answers a window of up to 31 days:
+
+```bash
+curl -G localhost:8000/api/v1/availability \
+  --data-urlencode resource_slug=default \
+  --data-urlencode from=2026-09-02T09:00:00+02:00 \
+  --data-urlencode to=2026-09-02T17:00:00+02:00
+```
+
+**Availability is advisory.** It holds nothing and reserves nothing — a slot it lists can
+be taken by someone else a moment later, and the authoritative answer is what happens when
+a booking is actually submitted.
 
 ## Architecture summary
 
@@ -161,8 +195,8 @@ See [`docs/external-intake.md`](docs/external-intake.md).
 | --- | --- | --- | --- |
 | 0 | Repository foundation, policy, and decision records | — | done |
 | 1 | Pure domain core: rule chain, decisions, slot search | — | done |
-| 2 | Persistence, audit log, native intake API, availability query | — | next |
-| 3 | Calendar handoff: ICS export and provider deeplinks | — | |
+| 2 | Persistence, audit log, native intake API, availability query | — | done |
+| 3 | Calendar handoff: ICS export and provider deeplinks | — | next |
 | 4 | Minimal server-rendered booking UI | — | |
 | 5 | External intake framework: adapters, HMAC, idempotency | — | |
 | 6 | Docker packaging, self-hosting docs, **first release** | `0.1.0` | |

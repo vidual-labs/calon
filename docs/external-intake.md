@@ -1,6 +1,8 @@
 # External intake
 
-> Status: planned (phase 5).
+> Status: planned (phase 5). The one piece that exists is the native adapter
+> (`intake/native.py`) and the single downstream path it feeds — which is the part this
+> document is really about.
 
 ## What this is for
 
@@ -34,7 +36,10 @@ from it.
 
 ## One path, not two
 
-Native intake is itself implemented as an adapter (`intake/native.py`).
+Native intake is itself implemented as an adapter (`intake/native.py`), and already is
+today. A native request arrives in the canonical shape and so has almost nothing to
+translate — which is exactly the point. The adapter exists so that there is no shortcut past
+the adapter layer for scheduling logic to appear in later.
 
 ```
 native form ─┐

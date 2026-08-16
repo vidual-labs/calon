@@ -19,6 +19,8 @@ from calon.domain.availability import (
     BlackoutPeriod,
     BookedSpan,
     Resource,
+    is_valid_timezone,
+    to_utc,
 )
 from calon.domain.decision import (
     Decision,
@@ -44,8 +46,10 @@ __all__ = [
     "Violation",
     "decide",
     "evaluate",
+    "is_valid_timezone",
     "resolve_end",
     "suggest_slots",
+    "to_utc",
 ]
 
 

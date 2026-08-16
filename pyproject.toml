@@ -111,6 +111,12 @@ disallow_any_explicit = true
 module = "tests.*"
 disallow_untyped_defs = false
 
+# Alembic's env and revision scripts are executed by Alembic, not imported by calon, and
+# they follow Alembic's own conventions rather than this project's.
+[[tool.mypy.overrides]]
+module = "calon.migrations.*"
+ignore_errors = true
+
 # ---------------------------------------------------------------------------
 # pytest
 # ---------------------------------------------------------------------------
@@ -121,7 +127,12 @@ addopts = "-q --strict-markers --strict-config"
 markers = [
   "integration: exercises the app through HTTP and the database",
 ]
-filterwarnings = ["error"]
+filterwarnings = [
+  "error",
+  # Starlette's test client warns about its own httpx dependency, which is a test-only
+  # concern and nothing calon ships or controls.
+  "ignore::starlette.exceptions.StarletteDeprecationWarning",
+]
 
 [tool.coverage.run]
 source = ["src/calon"]

@@ -1,7 +1,7 @@
 """Next-available slot search."""
 
 from collections.abc import Sequence
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from calon.domain import (
@@ -29,6 +29,7 @@ from tests.domain.builders import (
 
 NOW = at(2026, 9, 15, 8, 0)  # Tuesday, 08:00 Berlin
 TUESDAY = (2026, 9, 15)
+WEDNESDAY = (2026, 9, 16)
 SATURDAY = (2026, 9, 19)
 MONDAY = (2026, 9, 21)
 
@@ -40,6 +41,7 @@ def suggestions_for(
     existing: Sequence[BookedSpan] = (),
     now: datetime = NOW,
     limit: int = MAX_SUGGESTIONS,
+    until: datetime | None = None,
 ) -> tuple[SlotSuggestion, ...]:
     return suggest_slots(
         request,
@@ -49,6 +51,7 @@ def suggestions_for(
         blackouts=blackouts,
         existing=existing,
         limit=limit,
+        until=until,
     )
 
 
@@ -216,3 +219,67 @@ def test_a_structurally_unusable_request_is_not_offered_alternatives():
 
     assert decision.code is DecisionCode.RESOURCE_UNKNOWN
     assert decision.suggestions == ()
+
+
+# --------------------------------------------------------------------------------------
+# `until` — the bound that lets the availability query share this search (ADR 0007)
+# --------------------------------------------------------------------------------------
+
+
+def test_until_bounds_the_search_to_the_window_asked_about():
+    found = suggestions_for(
+        make_request(at(*WEDNESDAY, 9, 0), at(*WEDNESDAY, 9, 30)),
+        limit=100,
+        until=at(*WEDNESDAY, 10, 0),
+    )
+
+    # 09:45 would end at 10:15, past the window, so it is not offered.
+    assert local_starts(found) == [
+        at(*WEDNESDAY, 9, 0),
+        at(*WEDNESDAY, 9, 15),
+        at(*WEDNESDAY, 9, 30),
+    ]
+
+
+def test_a_slot_must_finish_by_until_rather_than_merely_start_before_it():
+    found = suggestions_for(
+        make_request(at(*WEDNESDAY, 9, 0), at(*WEDNESDAY, 10, 0)),
+        limit=100,
+        until=at(*WEDNESDAY, 11, 0),
+    )
+
+    assert all(slot.end <= at(*WEDNESDAY, 11, 0) for slot in found)
+    assert local_starts(found)[-1] == at(*WEDNESDAY, 10, 0)
+
+
+def test_until_can_narrow_the_horizon_but_never_extend_it():
+    """The policy's advance window still wins; a caller cannot ask past it."""
+    found = suggestions_for(
+        make_request(at(*TUESDAY, 10, 0), at(*TUESDAY, 10, 30)),
+        policy=make_policy(max_advance_days=1),
+        limit=100,
+        until=at(*SATURDAY, 17, 0),
+    )
+
+    assert found
+    assert {start.date() for start in local_starts(found)} == {date(*TUESDAY)}
+
+
+def test_a_window_too_short_for_the_duration_offers_nothing():
+    found = suggestions_for(
+        make_request(at(*WEDNESDAY, 9, 0), at(*WEDNESDAY, 10, 0)),
+        limit=100,
+        until=at(*WEDNESDAY, 9, 30),
+    )
+
+    assert found == ()
+
+
+def test_a_window_that_has_already_passed_offers_nothing():
+    found = suggestions_for(
+        make_request(at(*TUESDAY, 9, 0), at(*TUESDAY, 9, 30)),
+        limit=100,
+        until=at(*TUESDAY, 9, 30),
+    )
+
+    assert found == ()
