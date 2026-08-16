@@ -118,6 +118,31 @@ is how a "generic" boundary quietly becomes shaped around a single vendor. The f
 proven in `0.1.0` using a synthetic test source; the first real adapter lands in `0.2.0`,
 once there is a genuine payload sample to build against.
 
+## The other direction: reading availability
+
+Everything above is *inbound* — a source pushing a booking request in. A form builder like
+OpenFlow that wants to ask "which times are actually free" before it ever submits anything
+goes the other way, and needs no adapter and no config at all: `GET /api/v1/availability`
+(`docs/domain-model.md#the-http-contract`) is already a public, unauthenticated, read-only
+endpoint precisely so any caller can read it. It costs nothing to expose — see
+`docs/self-hosting.md`'s note that it discloses free/busy times only, which a public booking
+form already makes inferable.
+
+```
+GET /api/v1/availability?resource_slug=default&from=2026-09-01T00:00:00%2B02:00&to=2026-09-14T00:00:00%2B02:00
+```
+
+`resource_slug` is the "which calendar" a caller like OpenFlow configures per form field.
+The response carries no CORS headers, so a browser-side caller cannot reach it directly
+cross-origin; the consuming application (e.g. OpenFlow's own backend) should fetch it
+server-side and hand the slots to its own frontend. That also keeps calon reachable only from
+where its operator intends, rather than from the public internet at large — see the reverse
+proxy note in `docs/self-hosting.md` if you want to restrict it further.
+
+Nothing in this response reserves anything (ADR 0007): a caller that shows a slot as free is
+still subject to losing it to another requester between reading availability and submitting
+a booking, exactly like the native booking form is.
+
 ## Writing an adapter
 
 1. Create `src/calon/intake/external/<provider>.py`.
