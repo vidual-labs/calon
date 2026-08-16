@@ -1,7 +1,8 @@
 # Architecture
 
-> Status: planned. No product code exists yet — this describes what will be built in
-> phases 1–6. See the [roadmap](../README.md#roadmap).
+> Status: partially built. The `domain/` layer described below exists as of phase 1;
+> everything above it — services, persistence, the API, the calendar handoff — is still
+> planned. See the [roadmap](../README.md#roadmap).
 
 ## The shape of the system
 

@@ -1,7 +1,9 @@
 # Domain model
 
-> Status: planned. This is the reference the implementation will be built against, and it
-> must be kept current as schemas change (see `CLAUDE.md` §7).
+> Status: partially built. The decision types and the rule chain exist as of phase 1; the
+> Pydantic schemas and the tables are still planned. This document is the reference the
+> implementation is built against, and must be kept current as schemas change
+> (see `CLAUDE.md` §7).
 
 Two conventions apply everywhere:
 
@@ -36,6 +38,17 @@ the only input the scheduling core understands.
 `metadata` is the pressure valve: anything a provider sends that calon has no concept of
 goes here untouched, rather than growing a column and a boundary violation.
 
+### `BookingRequest`
+
+The domain layer's own view of a request, in `src/calon/domain/rules.py`: `resource_slug`,
+`start`, `timezone`, and an optional `end`. That is the whole of it.
+
+The requester's name, the subject, the notes, and `metadata` are all absent, because none
+of them can affect whether a slot is bookable. Keeping them out is the cheapest possible
+enforcement of "`metadata` is never read by core logic" — the core cannot read what it was
+never given. The service layer translates `BookingIntentIn` into a `BookingRequest` on the
+way in, and persists the full intent separately.
+
 ### `Decision`
 
 The structured accept/reject result.
@@ -52,6 +65,15 @@ The structured accept/reject result.
 Reporting the first failure as `code` keeps the outcome deterministic and easy to branch
 on; reporting all of them in `violations` means a requester who picked a Sunday at 3am is
 told both things at once instead of discovering them one at a time.
+
+In the domain layer `violations` and `suggestions` are tuples rather than lists — a
+decision is a value, and nothing downstream should be editing one after it has been
+recorded. They serialize as JSON arrays either way.
+
+`suggestions` is populated by the caller rather than by rule evaluation itself, via
+`Decision.with_suggestions()`. This keeps `evaluate()` cheap and total: judging a request
+never triggers a search. `calon.domain.decide()` composes the two for callers who want
+both.
 
 ### `DecisionCode`
 
@@ -74,11 +96,30 @@ An ordered enum. The rule chain evaluates in exactly this order.
 **Once shipped, these strings are public API.** They are never renamed, never repurposed,
 and never have their meaning changed. A new constraint gets a new code.
 
+The first three are **gating**: evaluation stops at the first of them, and the decision
+carries that one violation alone. A request with a negative duration, or one naming a
+resource that does not exist, is structurally unusable, and running the remaining rules
+against it would report confident nonsense — a backwards booking would also be accused of
+ending outside business hours. Codes 4 through 10 are all evaluated, and all their failures
+are reported.
+
+Gating rejections also carry no suggestions: there is no "next available" for a question
+that could not be asked.
+
 ### `SlotSuggestion`
 
 `{start, end, timezone}`. The search walks the `slot_granularity_min` grid forward from
 `max(now + min_notice, requested_start)` and returns the first **three** candidates that
 pass the complete rule chain, stopping at the `max_advance_days` horizon.
+
+`timezone` is the **requester's**, and `start` and `end` are expressed in it, so a
+suggestion can be rendered without a further conversion. The grid is anchored to each day's
+`window_start` and stepped in local wall-clock time, so slots keep their alignment across a
+DST transition instead of drifting by an hour.
+
+Each candidate is re-checked against the *complete* chain rather than a cheaper subset. A
+suggestion that turns out to sit inside a blackout, or on top of another booking's buffer,
+is worse than offering nothing.
 
 ## Tables
 

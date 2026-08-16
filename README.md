@@ -6,8 +6,10 @@ handoff that works with any major calendar.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-> **Status: pre-alpha, foundation phase.** There is no usable release yet and no product
-> code has been written. Do not run this in production. See the [roadmap](#roadmap).
+> **Status: pre-alpha.** Phase 1 is complete — the pure scheduling core (rule chain,
+> decisions, slot search) exists and is tested. There is no usable release yet: nothing is
+> reachable over HTTP and nothing is persisted, so calon cannot be run. Do not use this in
+> production. See the [roadmap](#roadmap).
 
 ---
 
@@ -41,6 +43,8 @@ The first release (`0.1.0`) does exactly this, end to end:
 - [ ] Normalize any request into one canonical **booking intent**
 - [ ] Apply booking rules and operator-defined time windows
 - [ ] Determine whether a requested slot is valid
+- [ ] Publish **which slots are free**, so a requester or an external system can pick one
+      rather than guess
 - [ ] Return a structured **accept / reject decision**, with next-available suggestions
 - [ ] Produce a generic **add-to-calendar** result that works across calendar ecosystems
 - [ ] Expose a source-agnostic intake boundary that external systems can plug into
@@ -153,16 +157,16 @@ See [`docs/external-intake.md`](docs/external-intake.md).
 
 ## Roadmap
 
-| Phase | Deliverable | Version |
-| --- | --- | --- |
-| 0 | Repository foundation, policy, and decision records | — |
-| 1 | Pure domain core: rule chain, decisions, slot search | — |
-| 2 | Persistence, audit log, native intake API | — |
-| 3 | Calendar handoff: ICS export and provider deeplinks | — |
-| 4 | Minimal server-rendered booking UI | — |
-| 5 | External intake framework: adapters, HMAC, idempotency | — |
-| 6 | Docker packaging, self-hosting docs, **first release** | `0.1.0` |
-| 7 | First real provider adapter, once a genuine payload exists | `0.2.0` |
+| Phase | Deliverable | Version | Status |
+| --- | --- | --- | --- |
+| 0 | Repository foundation, policy, and decision records | — | done |
+| 1 | Pure domain core: rule chain, decisions, slot search | — | done |
+| 2 | Persistence, audit log, native intake API, availability query | — | next |
+| 3 | Calendar handoff: ICS export and provider deeplinks | — | |
+| 4 | Minimal server-rendered booking UI | — | |
+| 5 | External intake framework: adapters, HMAC, idempotency | — | |
+| 6 | Docker packaging, self-hosting docs, **first release** | `0.1.0` | |
+| 7 | First real provider adapter, once a genuine payload exists | `0.2.0` | |
 
 Post-`0.2.0` candidates: an operator HTML view, requester-facing cancel and reschedule
 links, and opt-in direct calendar writes behind a `CalendarWriter` interface.
