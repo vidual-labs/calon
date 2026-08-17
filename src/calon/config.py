@@ -73,6 +73,21 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     docs_enabled: bool = True
 
+    #: The operator's login. Set via ``CALON_LOGIN``. This is the single key that gates
+    #: the operator web panel and every endpoint that returns personal data (notably the
+    #: ``.ics`` handoff). It is **required** when any personal-data endpoint is reached;
+    #: the instance still boots and the public booking flow still works without it, but
+    #: login-gated routes return ``HTTPError`` (401/503) until it is set.
+    login: str = ""
+    #: Optional shared ``API key`` for programmatic access to the operator endpoints
+    #: (``Authorization: Bearer <CALON_API_KEY>``). Set via ``CALON_API_KEY``. When unset,
+    #: the operator endpoints fall back to the cookie login from :attr:`login` and the
+    #: Bearer path is disabled. This is what an external system or a ``curl`` from the
+    #: operator's laptop uses.
+    api_key: str | None = None
+    #: How long an operator web session lives before it requires re-login.
+    session_ttl_hours: int = 12
+
     @field_validator("config_path", mode="before")
     @classmethod
     def _blank_path_is_none(cls, value: Any) -> Any:

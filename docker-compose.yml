@@ -1,0 +1,66 @@
+# calon — single-container self-hosted booking service.
+#
+# All configuration is read from .env (see .env.example). The single service
+# exposes its API on port 8000 and its web panel on the same port. A reverse
+# proxy in front handles TLS (see docs/self-hosting.md).
+#
+# Usage:
+#   cp .env.example .env
+#   cp config/calon.example.toml config/calon.toml
+#   # edit .env and config/calon.toml
+#   docker compose up -d
+#
+# The container persists its SQLite database under the `data` volume.
+
+name: calon
+
+services:
+  calon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: calon:${CALON_IMAGE_TAG:-latest}
+    container_name: calon
+    restart: unless-stopped
+    ports:
+      # Expose only the loopback address on the host. A reverse proxy should be
+      # the only thing that listens on 0.0.0.0 (see docs/self-hosting.md).
+      - "${CALON_HOST_PORT:-8000}:8000"
+    environment:
+      # Database path inside the container. It is mounted as a named volume so
+      # it survives container rebuilds.
+      CALON_DB_PATH: /app/data/calon.db
+      # Required by the app to know how much to trust inbound requests.
+      CALON_BASE_URL: ${CALON_BASE_URL:-http://localhost:8000}
+      # Long-lived; forms the domain of every calendar UID. Do not change after
+      # the first real booking.
+      CALON_INSTANCE_HOST: ${CALON_INSTANCE_HOST:-localhost}
+      # The operator login — the single key that gates the operator panel and
+      # the .ics handoff endpoint.
+      CALON_LOGIN: ${CALON_LOGIN:-}
+      # Optional: a shared API key for programmatic access to operator endpoints
+      # (Authorization: Bearer <CALON_API_KEY>).
+      CALON_API_KEY: ${CALON_API_KEY:-}
+      # Runtime settings.
+      CALON_LOG_LEVEL: ${CALON_LOG_LEVEL:-INFO}
+      CALON_DOCS_ENABLED: ${CALON_DOCS_ENABLED:-false}
+      CALON_CONFIG_PATH: /app/config/calon.toml
+    volumes:
+      - calon-data:/app/data
+      - ./config:/app/config:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2); sys.exit(0 if r.status==200 else 1)",
+        ]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+
+volumes:
+  calon-data:
+    driver: local

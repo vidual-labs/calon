@@ -24,6 +24,8 @@ __all__ = [
     "BookingIntentIn",
     "BookingOut",
     "BookingResponse",
+    "CalendarHandoff",
+    "CalendarLinksOut",
     "DecisionOut",
     "RequesterIn",
     "SlotOut",
@@ -155,8 +157,8 @@ class DecisionOut(BaseModel):
 class BookingOut(BaseModel):
     """A booking that was written. Present only when the decision was to accept.
 
-    ``start`` and ``end`` are in the requester's timezone. Buffers are not shown: they
-    widen the span used for conflict detection and are none of the requester's business.
+    ``start`` and ``end`` are in the requester's timezone. Buffers are not shown: the
+    buffered span widens conflict detection and is none of the requester's business.
     """
 
     id: str
@@ -164,6 +166,40 @@ class BookingOut(BaseModel):
     end: datetime
     timezone: str
     status: str
+    # The handoff the event should be added to. Present once the ICS file and
+    # provider deeplinks are built (phase 3); ``null`` in earlier builds so the field is
+    # additive and never a breaking change once it exists.
+    calendar: CalendarHandoff | None = None
+
+
+class CalendarLinksOut(BaseModel):
+    """Provider deeplinks for the accepted event.
+
+    Three keys, always present: ``google``, ``outlook_office`` (work/school accounts),
+    and ``outlook_live`` (personal Outlook.com). The query strings are exact and golden
+    tested; see ``docs/calendar-handoff.md``.
+    """
+
+    google: str
+    outlook_office: str
+    outlook_live: str
+
+
+class CalendarHandoff(BaseModel):
+    """What the requester needs to put the accepted booking onto their calendar.
+
+    Two layers (``docs/calendar-handoff.md``, ADR 0004): the ``ics_url`` is the
+    baseline and reaches every calendar that has ever read RFC 5545; the ``links`` are a
+    convenience, one click per provider, and are lossy (they carry no ``UID`` and cannot
+    deduplicate). ``ics_filename`` is the ``Content-Disposition`` filename the handler
+    sends with the file.
+    """
+
+    ics_url: str
+    ics_filename: str
+    uid: str
+    sequence: int
+    links: CalendarLinksOut
 
 
 class BookingResponse(BaseModel):

@@ -1,11 +1,11 @@
 # Self-hosting calon
 
-> Status: partly real. calon runs as of phase 2 and the configuration, database, and backup
-> sections below apply today. Docker packaging is phase 6 and does not exist yet, so the
-> `docker compose` steps are still the intended shape rather than a working command.
+> Status: real. calon runs as a single Docker container via `docker compose`, with an
+> operator web panel (login-gated), the public booking API, and the calendar handoff.
+> The configuration, database, security, and backup sections below apply today.
 
-calon is designed to run on one small server with no external services. A single container,
-a single SQLite file, and a reverse proxy in front of it.
+calon is designed to run on one small server with no external services. A single
+container, a single SQLite file, and a reverse proxy in front of it.
 
 ## Requirements
 
@@ -24,23 +24,25 @@ cp .env.example .env
 cp config/calon.example.toml config/calon.toml
 
 # Edit config/calon.toml: your timezone, weekdays, hours, notice, buffers, blackouts.
-# Edit .env: at minimum CALON_BASE_URL and CALON_INSTANCE_HOST.
+# Edit .env: at minimum CALON_BASE_URL, CALON_INSTANCE_HOST, and CALON_LOGIN.
 
-docker compose up -d
+docker compose up -d --build
 ```
 
-Until the container exists, run it directly:
+To develop without Docker:
 
 ```bash
 make install
 make dev
 ```
 
-Both copy steps are optional. With no `.env` and no `config/calon.toml`, calon starts on
+Both `cp` steps are optional. With no `.env` and no `config/calon.toml`, calon starts on
 the defaults `config/calon.example.toml` documents — it is fully usable with nothing
 configured. The database file and its schema are created on first start.
 
-The generated API reference is at `/docs`. The booking form at `/book` is phase 4.
+The generated API reference is at `/docs` (disable with `CALON_DOCS_ENABLED=false` in
+production). The operator panel is at `/login`; the public booking form at `/book`
+arrives in phase 4.
 
 ## Configuration
 
@@ -52,10 +54,17 @@ Two files, with a deliberate split:
 
 Neither is tracked in git. `config/calon.toml` may contain per-source shared secrets.
 
-There is no admin UI, which is a deliberate simplification rather than an omission: no admin
-UI means no login, no sessions, and no password storage anywhere in calon. Your rules are a
-plain text file you can diff, review, and keep in a private repository. Restart the service
-after changing it.
+There is an operator web panel (`/login` and `/bookings`), gated by the `CALON_LOGIN`
+key. It is deliberately a **single shared login, not per-user accounts** — calon models
+one operator per instance, and the panel exists so the operator can see the bookings and
+download the calendar handoffs. It is not a public form; the public booking flow still
+goes through the API at `/api/v1/bookings` (and, later, the public booking form at
+`/book`). The login session is a short-lived, memory-only cookie; `CALON_LOGIN` keeps the
+login secret and is the only credential the instance stores. See
+[ADR 0010](adr/0010-operator-login-and-web-panel.md).
+
+Your scheduling rules are a plain text file you can diff, review, and keep in a private
+repository. Restart the service after changing it.
 
 **The file wins at every startup.** calon rewrites the rules it holds in the database from
 `config/calon.toml` each time it starts, so editing the file and restarting is the whole
@@ -76,18 +85,47 @@ If you change it later, previously issued events can no longer be updated in pla
 re-downloaded event will appear as a duplicate in the requester's calendar rather than
 replacing the original. Pick a stable hostname before your first real booking.
 
-## Reverse proxy
+## Security
 
-Terminate TLS in front of calon and forward to port 8000. Anything that sets
-`X-Forwarded-Proto` and `X-Forwarded-For` correctly will do — Caddy, nginx, or Traefik.
+### The operator login
 
-Consider restricting `/api/v1/…` at the proxy if you only need the public booking form. The
-form at `/book` is meant to be public; the API generally is not.
+Set `CALON_LOGIN` in `.env`. It is the single credential that gates the operator surface:
 
-`GET /api/v1/availability` discloses free/busy times only — never a requester, a subject, or
-any booking content. In practice it publishes nothing new, since a public booking form makes
-the same shape inferable by anyone willing to probe it. If you do not want free/busy
-readable at all, restrict it at the proxy.
+- the web panel — `/login` (the only public page) and `/bookings` (login-gated);
+- the calendar handoff — `GET /api/v1/bookings/{id}/calendar.ics` and the deeplinks
+  returned in the accept response. That endpoint returns a requester's name and subject,
+  so it must never be public.
+
+The login is **one shared key, not per-user accounts**. The session is an HTTP-only
+`calon_session` cookie whose value is a random token the server keeps in memory; the
+cookie name and token are meaningless without the server state. It is `SameSite=Lax`,
+`HttpOnly`, and marked `Secure` when `CALON_BASE_URL` is `https://`. A restart clears all
+sessions (in-memory, by design) — no session store on disk, nothing to leak.
+
+The **public booking intake** (`POST /api/v1/bookings` for a booking by a requester) and
+**availability** (`GET /api/v1/availability`) remain unauthenticated by design — anyone
+should be able to book or check free times. Only the *operator* surface and the
+*personal-data* endpoints require the login.
+
+If `CALON_LOGIN` is left empty, the operator panel and the `.ics` endpoint return `503`
+("login not configured") — the instance *fails closed* rather than opening the panel to
+anyone. The public booking API still works. Set `CALON_LOGIN` before you expose the
+instance publicly.
+
+### Optional shared API key
+
+`CALON_API_KEY` (optional) issues a `Bearer` token on the same endpoints the login gates
+(`Authorization: Bearer <key>`). Set it if you want to script the operator panel from
+cron or wire up an external system. It shares the same authorisation as the login; a
+request with either the valid cookie **or** the Bearer key is admitted. Leave it empty to
+disable the Bearer path.
+
+### TLS
+
+calon does not terminate TLS. Terminate it at the reverse proxy and forward to port 8000.
+Anything that sets `X-Forwarded-Proto` correctly qualifies — Caddy, nginx, or Traefik.
+With TLS, set `CALON_BASE_URL` to the `https://` address so the session cookie gains the
+`Secure` attribute and the calendar links are absolute and correct.
 
 ## Backups
 

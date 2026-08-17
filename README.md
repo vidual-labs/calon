@@ -14,10 +14,10 @@ handoff that works with any major calendar.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-> **Status: pre-alpha.** Phase 2 is complete — calon now runs. Booking requests can be
-> submitted over HTTP, judged against your rules, and stored; availability can be queried;
-> every decision is audited. There is still no release: an accepted booking produces a
-> decision but no calendar handoff, and there is no booking form yet. Do not use this in
+> **Status: pre-alpha.** Phase 3 is complete — calon now runs, hands off an accepted
+> booking to the requester's calendar (ICS + Google / Outlook deeplinks + a login-gated
+> `.ics` endpoint), and ships as a Docker container behind an operator login. A public
+> booking form (`/book`) and a release are both still to come. Do not use this in
 > production. See the [roadmap](#roadmap).
 
 ---
@@ -55,9 +55,11 @@ The first release (`0.1.0`) does exactly this, end to end:
 - [x] Publish **which slots are free**, so a requester or an external system can pick one
       rather than guess
 - [x] Return a structured **accept / reject decision**, with next-available suggestions
-- [ ] Produce a generic **add-to-calendar** result that works across calendar ecosystems
+- [x] Produce a generic **add-to-calendar** result that works across calendar ecosystems
 - [ ] Expose a source-agnostic intake boundary that external systems can plug into
 - [x] Keep a minimal audit trail of every decision
+- [x] Ship as a single Docker container with an **operator login** for the personal-data
+     endpoints (the web panel and the `.ics` file)
 
 **Explicit non-goals for the MVP:** no CRM, no workflow automation engine, no billing or
 payments, no deep calendar-provider write integrations, no dependency on external lead
@@ -92,33 +94,49 @@ from an external system travel the exact same path.
 
 ## Quick start
 
-> ⚠️ **Pre-alpha.** The API below works today. Docker packaging arrives in phase 6, and the
-> booking form at `/book` in phase 4 — neither exists yet.
+> ⚠️ **Pre-alpha.** The API below works today, and the instance ships as a Docker
+> container. A public booking form at `/book` arrives in phase 4 — it does not exist yet.
 
 ```bash
 git clone https://github.com/vidual-labs/calon.git
 cd calon
 cp config/calon.example.toml config/calon.toml   # set your hours, timezone, and rules
-cp .env.example .env
+cp .env.example .env                              # then set CALON_BASE_URL,
+                                                  # CALON_INSTANCE_HOST, and CALON_LOGIN
 
 make install    # uv sync
 make dev        # uvicorn with reload
 make check      # ruff + mypy + pytest
 ```
 
+Or, the operator's normal path — build and run the container:
+
+```bash
+docker compose up -d --build
+```
+
 Both copy steps are optional: with no `.env` and no `config/calon.toml`, calon starts on
 the defaults `config/calon.example.toml` documents. The database is created and migrated on
-first start.
+first start. Set `CALON_LOGIN` before you expose the instance, or the operator panel and
+the `.ics` endpoint will refuse to run (they fail closed).
 
-Then open <http://localhost:8000/docs> for the generated OpenAPI reference.
+Then open <http://localhost:8000/docs> for the generated OpenAPI reference, and
+<http://localhost:8000/login> for the operator panel.
 
 ### The API
 
 ```
-POST /api/v1/bookings      submit a booking request
-GET  /api/v1/availability  list free slots in a window
+POST /api/v1/bookings      submit a booking request       (public)
+GET  /api/v1/availability  list free slots in a window    (public)
+GET  /api/v1/bookings/{id}/calendar.ics  the RFC 5545 file (operator login)
+GET  /bookings             the operator panel list        (operator login)
 GET  /healthz              liveness
 ```
+
+The first two are public on purpose: anyone may book or check free times. The last two
+carry personal data — a requester's name, subject, and booking — so they are behind
+`CALON_LOGIN`. An accept now also returns a `CalendarHandoff` (ICS URL + deeplinks) in the
+response body; the `201` means a booking exists.
 
 A booking request is answered with a decision either way. `201` means a booking exists;
 `200` with `"outcome": "rejected"` means the request was judged and refused, with every
@@ -151,7 +169,7 @@ a booking is actually submitted.
 
 | Concern | Choice |
 | --- | --- |
-| Language | Python 3.12 |
+| Language | Python 3.13 (requires ≥3.12) |
 | Web framework | FastAPI (OpenAPI schema generated, not hand-written) |
 | Storage | SQLite in WAL mode, via SQLAlchemy 2.0 + Alembic |
 | Templates | Jinja2, server-rendered, no JavaScript and no build step |
@@ -204,15 +222,16 @@ See [`docs/external-intake.md`](docs/external-intake.md).
 | 0 | Repository foundation, policy, and decision records | — | done |
 | 1 | Pure domain core: rule chain, decisions, slot search | — | done |
 | 2 | Persistence, audit log, native intake API, availability query | — | done |
-| 3 | Calendar handoff: ICS export and provider deeplinks | — | next |
-| 4 | Minimal server-rendered booking UI | — | |
+| 3 | Calendar handoff: ICS export and provider deeplinks | — | done |
+| 4 | Operator web panel (login-gated list + `.ics`) and minimal booking UI | — | in progress |
 | 5 | External intake framework: adapters, HMAC, idempotency | — | |
-| 6 | Docker packaging, self-hosting docs, **first release** | `0.1.0` | |
-| 7 | First real provider adapter, once a genuine payload exists | `0.2.0` | |
-| 8 | Optional resource calendar sync: Google Calendar & Microsoft 365 free/busy check plus write-back of accepted bookings, behind a `CalendarProvider` interface, opt-in per resource | `0.3.0` | |
+| 6 | Docker packaging and self-hosting docs | — | done |
+| 7 | **First release** | `0.1.0` | next |
+| 8 | First real provider adapter, once a genuine payload exists | `0.2.0` | |
+| 9 | Optional resource calendar sync: Google Calendar & Microsoft 365 free/busy check plus write-back of accepted bookings, behind a `CalendarProvider` interface, opt-in per resource | `0.3.0` | |
 
-Post-`0.3.0` candidates: an operator HTML view, and requester-facing cancel and reschedule
-links.
+Post-`0.3.0` candidates: requester-facing cancel and reschedule links, and a public
+booking form at `/book`.
 
 ## Contributing
 

@@ -44,8 +44,24 @@ per user-visible change, describing the effect rather than the implementation.
   be understood stops startup rather than being half-applied. calon still runs with no
   configuration file at all, on the defaults `config/calon.example.toml` documents.
 - Two requests for the same slot arriving at the same moment cannot both be accepted.
-- No calendar handoff yet: an accepted booking comes back as a decision, not as something
-  you can add to a calendar. That is the next phase — see the roadmap.
+- **Calendar handoff (phase 3).** An accepted booking now comes back with a `CalendarHandoff`:
+  a stable `UID` (`<booking-id>@<CALON_INSTANCE_HOST>`), the event's start/end in UTC, and
+  three one-click deeplinks (Google Calendar, Microsoft 365, and Outlook.com). A new endpoint
+  `GET /api/v1/bookings/{id}/calendar.ics` serves the RFC 5545 file as
+  `text/calendar; charset=utf-8` with `Content-Disposition: attachment`. The ICS event uses
+  `METHOD:PUBLISH` and `STATUS:CONFIRMED`, and the `SEQUENCE` field is reserved for
+  amendments (post-MVP). The `.ics` endpoint and the accept response's deeplinks are
+  **login-gated** because they carry a requester's name and subject — set `CALON_LOGIN`.
+- **Operator web panel (phase 3→4 bridge).** A lean, server-rendered panel: `/login` (the
+  only public page), `/bookings` (login-gated list of every booking with a "Download .ics"
+  link), and `/logout`. The login is a single shared operator key (not per-user accounts);
+  the session is an HTTP-only, memory-only cookie. Gated by the same `CALON_LOGIN` and
+  `CALON_API_KEY` (optional Bearer) as the `.ics` endpoint. See
+  [ADR 0010](adr/0010-operator-login-and-web-panel.md).
+- **Docker packaging (phase 6).** `Dockerfile` (multi-stage, Python 3.13, non-privileged
+  user, `/healthz` healthcheck) and `docker-compose.yml` (single service, persistent
+  `data` volume for the SQLite file, `config/` mounted read-only). Ship with
+  `docker compose up -d --build`.
 - An ASCII logo at the top of `README.md`.
 
 ### Changed
@@ -58,7 +74,22 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Security
 
-- _Nothing yet._
+- New `CALON_LOGIN` runtime setting (see `.env.example`). When set, it gates the operator
+  web panel and every endpoint that returns personal data — most importantly
+  `GET /api/v1/bookings/{id}/calendar.ics`, which carries a requester's name and subject.
+  Without `CALON_LOGIN` the operator surface returns `503` (it fails closed rather than
+  open); the public booking API still works.
+- New optional `CALON_API_KEY` runtime setting: a shared Bearer token for programmatic
+  access to the same operator endpoints (for example, scripting the panel or integrating
+  an external system). Unset by default.
+- The operator login session is an `HttpOnly`, `SameSite=Lax` cookie whose token is a
+  random value the server keeps in **memory**. It is marked `Secure` when `CALON_BASE_URL`
+  is `https://`. No session is written to disk; a restart clears all sessions. Nothing is
+  stored on disk that would let an attacker open the operator panel or read a requester's
+  booking.
+- The `.ics` endpoint is now authenticated rather than public. If you have a
+  deployment where the previous "public `.ics`" behaviour mattered, see
+  [ADR 0010](adr/0010-operator-login-and-web-panel.md).
 
 <!--
 On release, rename [Unreleased] to [X.Y.Z] - YYYY-MM-DD, add a fresh empty [Unreleased]

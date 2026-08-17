@@ -34,12 +34,21 @@ _MARGIN = timedelta(days=1)
 
 @dataclass(frozen=True, slots=True)
 class AcceptedBooking:
-    """The booking that was written, when the answer was yes."""
+    """The booking that was written, when the answer was yes.
+
+    Carries the iCalendar identity minted inside the acceptance transaction (ADR 0004) so
+    the handoff can be assembled after the transaction commits, out of band. The ``UID`` is
+    deterministic — ``<intent-uuid>@<instance-host>`` — so a requester who re-issues the
+    same booking request gets a calendar event that updates in place rather than
+    duplicates.
+    """
 
     id: str
     start_utc: datetime
     end_utc: datetime
     status: str
+    ics_uid: str
+    ics_sequence: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,12 +76,17 @@ def submit_intent(
     source: str,
     now: datetime,
     raw_payload: dict[str, Any] | None = None,
+    instance_host: str = "localhost",
 ) -> Submission:
     """Record a booking request, judge it, and write the outcome.
 
     ``session`` must already be inside the ``BEGIN IMMEDIATE`` transaction that
     ``Database.write()`` opens: rule evaluation and insertion have to be one atomic step,
     or two simultaneous requests for the same slot can both read "free".
+
+    ``instance_host`` is the domain part of the iCalendar ``UID`` that gets minted on
+    acceptance (ADR 0004). The route passes it through from ``Settings`` so a re-issue of
+    the same booking request produces a calendar event with a stable, predictable identity.
     """
     resource_row = repository.find_resource(session, intent.resource_slug)
     known_row = resource_row or repository.any_resource(session)
@@ -140,6 +154,7 @@ def submit_intent(
                 block_start=block_start,
                 block_end=block_end,
                 now=now,
+                ics_uid=f"{intent_row.id}@{instance_host}",
             )
 
     _record_outcome(session, intent_row, decision, accepted=booking is not None, now=now)
@@ -235,7 +250,16 @@ def _write_booking(
     block_start: datetime,
     block_end: datetime,
     now: datetime,
+    ics_uid: str,
+    ics_sequence: int = 0,
 ) -> AcceptedBooking:
+    """Create the booking row and mint its iCalendar identity.
+
+    The ``UID`` is minted here, inside the acceptance transaction, so a double-booking
+    can never leave behind a dangling calendar identity, and the value is stable for the
+    life of the booking (ADR 0004). It is only *issued* to the requester via the
+    handoff endpoint, which is where the ``.ics`` file is rendered.
+    """
     row = Booking(
         intent_id=intent_id,
         resource_id=resource_id,
@@ -245,10 +269,19 @@ def _write_booking(
         block_end_utc=block_end,
         status="confirmed",
         created_at_utc=now,
+        ics_uid=ics_uid,
+        ics_sequence=ics_sequence,
     )
     session.add(row)
     session.flush()
-    return AcceptedBooking(id=row.id, start_utc=start, end_utc=end, status=row.status)
+    return AcceptedBooking(
+        id=row.id,
+        start_utc=start,
+        end_utc=end,
+        status=row.status,
+        ics_uid=ics_uid,
+        ics_sequence=ics_sequence,
+    )
 
 
 def _record_outcome(
