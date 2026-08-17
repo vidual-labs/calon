@@ -46,6 +46,7 @@ per user-visible change, describing the effect rather than the implementation.
 - Two requests for the same slot arriving at the same moment cannot both be accepted.
 - No calendar handoff yet: an accepted booking comes back as a decision, not as something
   you can add to a calendar. That is the next phase — see the roadmap.
+- An ASCII logo at the top of `README.md`.
 
 ### Changed
 

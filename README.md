@@ -1,3 +1,11 @@
+```
+              __
+  _________ _/ /___  ____
+ / ___/ __ `/ / __ \/ __ \
+/ /__/ /_/ / / /_/ / / / /
+\___/\__,_/_/\____/_/ /_/
+```
+
 # calon
 
 **A lean, self-hostable booking intake tool.** calon captures booking requests, applies
