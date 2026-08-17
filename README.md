@@ -209,9 +209,10 @@ See [`docs/external-intake.md`](docs/external-intake.md).
 | 5 | External intake framework: adapters, HMAC, idempotency | — | |
 | 6 | Docker packaging, self-hosting docs, **first release** | `0.1.0` | |
 | 7 | First real provider adapter, once a genuine payload exists | `0.2.0` | |
+| 8 | Optional resource calendar sync: Google Calendar & Microsoft 365 free/busy check plus write-back of accepted bookings, behind a `CalendarProvider` interface, opt-in per resource | `0.3.0` | |
 
-Post-`0.2.0` candidates: an operator HTML view, requester-facing cancel and reschedule
-links, and opt-in direct calendar writes behind a `CalendarWriter` interface.
+Post-`0.3.0` candidates: an operator HTML view, and requester-facing cancel and reschedule
+links.
 
 ## Contributing
 

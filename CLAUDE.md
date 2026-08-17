@@ -28,6 +28,12 @@ External integrations are strictly additive and always optional. If a proposed c
 weakens this boundary, say so explicitly and propose the simpler standalone alternative
 instead of implementing it.
 
+This explicitly covers calendar-provider sync (Google Calendar, Microsoft 365): calon's own
+rule evaluation and conflict detection against its own bookings must keep working correctly
+with zero calendar integration configured. When a resource has a provider connected, sync
+adds an extra free/busy check and writes calon-originated bookings into that calendar — it
+never becomes a precondition for accepting a booking.
+
 This is enforced mechanically, not just by convention: CI runs the full native test suite
 with **no** external sources configured. Do not weaken or skip that job.
 
@@ -44,15 +50,22 @@ calon **is not**:
 - a restaurant or hotel reservation suite (no tables, covers, room inventory, rate plans)
 - a generic automation or workflow platform
 - an OpenFlow plugin, or dependent on any external lead source
-- a calendar sync engine (calon does not read or write provider calendars)
+- a general-purpose calendar sync or mirroring tool — the optional Google Calendar /
+  Microsoft 365 integration only checks free/busy for the booked resource and writes
+  calon-originated bookings; it does not two-way sync arbitrary events, calendars, or
+  attendees
 
 **If a request implies CRM, workflow automation, payments, multi-tenancy, or AI features:
 stop and flag it as out of scope before writing any code.** Do not implement it "just a
 small version" — small versions of out-of-scope features are how the boundary erodes.
 
-Deferred by design, not forgotten: direct calendar-provider writes, requester-facing cancel
-and reschedule links, an operator HTML view, and confirmation email. Each requires an
-explicit decision before it is built.
+Planned: optional two-way sync with a resource's calendar (Google Calendar and Microsoft
+365) — checking free/busy as an additional availability signal and writing calon-originated
+bookings once accepted. Additive and opt-in per §2; see the roadmap in `README.md` and
+[ADR 0009](docs/adr/0009-optional-resource-calendar-sync.md).
+
+Deferred by design, not forgotten: requester-facing cancel and reschedule links, an operator
+HTML view, and confirmation email. Each requires an explicit decision before it is built.
 
 ---
 
