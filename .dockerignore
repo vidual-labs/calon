@@ -1,21 +1,43 @@
-.git/
-.github/
-.venv/
-venv/
+# Build and test artifacts — never needed in the image.
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
 .pytest_cache/
 .mypy_cache/
-.ruff_cache/
 .coverage
 htmlcov/
-calon.db*
+venv/
+.venv/
+env/
+.env
+data/
+*.db
 *.sqlite3
 config/calon.toml
-.env
-.env.*
-!.env.example
-docs/
+*.log
+dist/
+build/
+*.egg-info/
+src/*.egg-info/
+
+# The example config ships with the image; operators edit their own copy at
+# runtime. We keep the file itself (it's a template), not the runtime instance.
+git/
+.git/
+.gitignore
+
+# Development tooling.
+CLAUDE.md
+Makefile
+py.typed
 tests/
-Dockerfile
-docker-compose.yml
+docs/
+CHANGELOG.md
+README.md
+LICENSE
+*.html
+Dockerfile.dockerignore
+
+# Python type-checking artefacts.
+mypy.ini
+pyrightconfig.json

@@ -1,6 +1,9 @@
 # Calendar handoff
 
-> Status: planned (phase 3).
+> Status: implemented (phase 3). Accepts now carry the `CalendarHandoff` schema; the
+> `.ics` endpoint is live. The endpoint is **login-gated** — it carries a requester's
+> name and subject, so it is behind the operator login (see
+> [self-hosting § Security](self-hosting.md#security)), not a public route.
 
 ## The principle
 

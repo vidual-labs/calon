@@ -23,7 +23,9 @@ from calon.clock import utcnow
 from calon.config import OperatorConfig, Settings, load_operator_config
 from calon.db import Database
 from calon.migrate import upgrade_to_head
+from calon.security import LoginStore
 from calon.services.provisioning import sync_operator_config
+from calon.web import router as web_router
 
 __all__ = ["app", "create_app"]
 
@@ -73,6 +75,19 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
         app.state.db = database
         app.state.settings = resolved_settings
         app.state.config = resolved_config
+
+        # The operator's login store. Built only when a login is configured; when it is
+        # not, ``login_store`` is ``None`` and every login-gated route refuses with 503
+        # while the public booking flow keeps working (ADR 0010).
+        app.state.login_store = (
+            LoginStore(
+                resolved_settings.login,
+                session_ttl_seconds=resolved_settings.session_ttl_hours * 60 * 60,
+            )
+            if resolved_settings.login
+            else None
+        )
+
         try:
             yield
         finally:
@@ -88,6 +103,7 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
         openapi_url="/openapi.json" if resolved_settings.docs_enabled else None,
     )
     app.include_router(v1_router)
+    app.include_router(web_router)
 
     @app.get("/healthz", tags=["operations"], summary="Liveness check")
     def healthz() -> dict[str, str]:
