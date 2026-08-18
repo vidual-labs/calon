@@ -33,7 +33,6 @@ py.typed
 tests/
 docs/
 CHANGELOG.md
-README.md
 LICENSE
 *.html
 Dockerfile.dockerignore
