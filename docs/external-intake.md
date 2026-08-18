@@ -57,11 +57,18 @@ any provider.
 ## The endpoint
 
 ```
-POST /api/v1/intake/{source_slug}
+POST /api/v1/{source_slug}
 ```
 
-One endpoint serves every registered source. The flow is: look up the adapter by slug →
-`verify()` → `parse()` → `booking_service.submit_intent()`.
+One endpoint serves every registered source. The source slug is a path segment, not a
+sub-path: the router is mounted under `/api/v1`, so the full route is `/api/v1/<slug>` and the
+slug is the only thing that varies. (ADR 0005 shows the draft path as
+`POST /api/v1/intake/{source_slug}`; [ADR 0012](adr/0012-external-intake-final.md) records the
+decision to drop the `/intake/` segment so the path is symmetric with the other versioned
+routes — the code and the tests below follow the shipped path.)
+
+The flow is: look up the adapter by slug → `verify()` → `parse()` →
+`booking_service.submit_intent()`.
 
 ### Authentication
 
@@ -89,6 +96,13 @@ A replay **returns the stored original response** with `200` and `Idempotent-Rep
 and logs `intake.replayed`. It does not re-evaluate the rules, and it does not create a
 second booking — including when the original request was rejected, so a retry cannot turn
 yesterday's rejection into today's acceptance because the calendar has since changed.
+
+The mechanism is a **stored decision**: the structured decision (`code`, `reason`, `suggestions`)
+is serialized into the `decision_json` column on the intent row at the instant it is produced
+(ADR 0012, migration 0002). A replay reads that column and returns the frozen decision re-
+validated into the public response shape, so the replayed `reason` and `suggestions` are
+byte-for-byte the original evaluation's — a retry cannot change the outcome even if the
+calendar has moved since.
 
 ## Registering a source
 

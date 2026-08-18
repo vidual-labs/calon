@@ -1,12 +1,19 @@
 """The single entry point for creating a booking.
 
 Every intake path — the native API, the booking form in phase 4, an external source's
-webhook in phase 5 — converges here (``CLAUDE.md`` §4.2). There is no second path that
+webhook in phase 6 — converges here (``CLAUDE.md`` §4.2). There is no second path that
 could drift, and no scheduling logic anywhere above this function.
 
 What this function owns: the transaction, the translation between rows and domain values,
 the audit trail, and writing the outcome down. What it does not own: the decision. That
 comes from ``calon.domain.decide`` and is recorded as given.
+
+Idempotency (ADR 0005): the caller may pass ``idempotency_key`` for external intake. The
+key is attached to the intent row at insert time so a concurrent retry on the same key
+resolves to the same row. The *route* handles the replay — it is the caller that decides
+"this pair has already been seen, return the stored decision" — because re-reading from
+the database is where the answer comes from, and the route is the only layer that knows
+whether a second request is a retry.
 """
 
 from __future__ import annotations
@@ -21,7 +28,7 @@ from calon.domain import AvailabilityPolicy, Decision, decide, to_utc
 from calon.domain.rules import BookingRequest
 from calon.intake.native import NATIVE_SOURCE
 from calon.models import Booking, BookingIntent
-from calon.schemas import BookingIntentIn
+from calon.schemas import BookingIntentIn, DecisionOut
 from calon.services import repository
 
 __all__ = ["AcceptedBooking", "Submission", "submit_intent"]
@@ -69,6 +76,17 @@ class Submission:
         return self.booking is not None
 
 
+def _decision_to_json(decision: Decision) -> dict[str, Any]:
+    """The structured decision in wire form — exactly what ``DecisionOut`` would build.
+
+    Serialized with ``mode="json"`` so datetimes become strings: the stored value must
+    survive a round-trip through SQLite's JSON column unchanged. A replay returns this
+    value as-is rather than re-building it, so what the source first got is what it gets
+    again — including suggestions the requester would want to see (ADR 0005).
+    """
+    return DecisionOut.of(decision).model_dump(mode="json")
+
+
 def submit_intent(
     session: Session,
     intent: BookingIntentIn,
@@ -76,6 +94,7 @@ def submit_intent(
     source: str,
     now: datetime,
     raw_payload: dict[str, Any] | None = None,
+    idempotency_key: str | None = None,
     instance_host: str = "localhost",
 ) -> Submission:
     """Record a booking request, judge it, and write the outcome.
@@ -87,6 +106,13 @@ def submit_intent(
     ``instance_host`` is the domain part of the iCalendar ``UID`` that gets minted on
     acceptance (ADR 0004). The route passes it through from ``Settings`` so a re-issue of
     the same booking request produces a calendar event with a stable, predictable identity.
+
+    ``idempotency_key`` (ADR 0005) is the external-intake replay key. It is stored on the
+    intent row so a concurrent request with the same key and the same source resolves to
+    the same row via the unique ``(source, idempotency_key)`` index. The *route* (not this
+    function) handles the replay path — that is where the stored response is read back
+    and returned. This function is happy to be called twice with the same key; it is the
+    route's job to detect that and short-circuit to the stored outcome instead.
     """
     resource_row = repository.find_resource(session, intent.resource_slug)
     known_row = resource_row or repository.any_resource(session)
@@ -113,6 +139,7 @@ def submit_intent(
         requested_start=requested_start,
         requested_end=requested_end,
         raw_payload=raw_payload,
+        idempotency_key=idempotency_key,
     )
 
     request = BookingRequest(
@@ -195,18 +222,23 @@ def _record_intent(
     requested_start: datetime,
     requested_end: datetime,
     raw_payload: dict[str, Any] | None,
+    idempotency_key: str | None = None,
 ) -> BookingIntent:
     """Write down what was asked for, before judging it.
 
     The intent is recorded first so that a request is on the record even if deciding it
     raises. ``resource_id`` is null when the request named a resource that does not exist,
     which is exactly the case worth being able to find later.
+
+    ``idempotency_key`` is stored on the row so the unique ``(source, idempotency_key)``
+    index (migration 0001) can resolve a concurrent retry to this row. Native intake
+    passes ``None`` — there is no retry semantics there to be idempotent about.
     """
     row = BookingIntent(
         resource_id=resource_id,
         source=source,
         source_ref=intent.source_ref,
-        idempotency_key=None,
+        idempotency_key=idempotency_key,
         requested_start_utc=requested_start,
         requested_end_utc=requested_end,
         requester_timezone=intent.timezone,
@@ -296,6 +328,10 @@ def _record_outcome(
     intent_row.decision_code = decision.code.value
     intent_row.decision_reason = decision.reason
     intent_row.decided_at_utc = now
+    # The complete structured decision, for external-intake replays (ADR 0005). Native
+    # intents carry it too — the cost is one JSON column write and the value is free to
+    # a future native replay endpoint that would otherwise have to re-derive it.
+    intent_row.decision_json = _decision_to_json(decision)
     session.flush()
 
 

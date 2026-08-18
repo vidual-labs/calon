@@ -9,15 +9,18 @@ from fastapi import Depends, HTTPException, Request, status
 
 from calon.config import Settings
 from calon.db import Database
+from calon.intake.external import SourceRegistry
 from calon.security import SESSION_COOKIE, LoginStore
 
 __all__ = [
     "AuthorisedOperator",
     "DatabaseDep",
+    "RegistryDep",
     "SettingsDep",
     "get_authorised_operator",
     "get_database",
     "get_settings",
+    "get_source_registry",
 ]
 
 
@@ -84,6 +87,25 @@ def get_authorised_operator(
     )
 
 
+def get_source_registry(request: Request) -> SourceRegistry:
+    """The startup-built intake source registry (ADR 0005).
+
+    The registry is built once in ``create_app``'s lifespan from the operator
+    config's ``[sources.<slug>]`` tables and lives on ``app.state``. Exposing it
+    as a dependency — rather than touching ``app.state`` inside the route body —
+    keeps the route testable: a test override replaces the registry wholesale,
+    which is exactly the seam the ADR's boundary contract is about.
+    """
+    registry = request.app.state.source_registry
+    if registry is None:
+        # create_app's lifespan builds it before the app accepts requests; a None here
+        # means the app was constructed without running the lifespan (a test shortcut).
+        raise RuntimeError("source registry not initialised; run the app lifespan first")
+    assert isinstance(registry, SourceRegistry)
+    return registry
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DatabaseDep = Annotated[Database, Depends(get_database)]
+RegistryDep = Annotated[SourceRegistry, Depends(get_source_registry)]
 AuthorisedOperator = Annotated[LoginStore, Depends(get_authorised_operator)]

@@ -21,7 +21,6 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-
 from typing import Any
 
 __all__ = [
@@ -68,7 +67,7 @@ class IntakeParseError(IntakeError):
 
 
 class IntakeIntegrityError(IntakeError):
-    """An integrity check inside the intake route failed (e.g. idempotency race). Maps to 500-ish."""
+    """An integrity check inside the intake route failed (e.g. idempotency race). Maps to 500."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,11 +154,15 @@ def _parse_timestamp(raw: str | None) -> datetime:
     try:
         ts = int(raw)
     except ValueError:
-        raise IntakeAuthError(f"timestamp header {TIMESTAMP_HEADER!r} must be integer seconds") from None
+        raise IntakeAuthError(
+            f"timestamp header {TIMESTAMP_HEADER!r} must be integer seconds"
+        ) from None
     try:
         return datetime.fromtimestamp(ts, tz=UTC)
     except (OverflowError, OSError, ValueError):
-        raise IntakeAuthError(f"timestamp header {TIMESTAMP_HEADER!r} is not a representable instant") from None
+        raise IntakeAuthError(
+            f"timestamp header {TIMESTAMP_HEADER!r} is not a representable instant"
+        ) from None
 
 
 def verify_signature(
@@ -177,22 +180,36 @@ def verify_signature(
     malformed timestamp raises rather than being silently treated as zero.
     """
     if not secret:
-        raise IntakeAuthError("the source has no secret configured; check [sources.<slug>] in calon.toml")
+        raise IntakeAuthError(
+            "the source has no secret configured; check [sources.<slug>] in calon.toml"
+        )
+
+    def _hget(name: str) -> str | None:
+        """Case-insensitive header lookup (RFC 7230 §3.2)."""
+        for k, v in headers.items():
+            if k.lower() == name.lower():
+                return v
+        return None
 
     # --- timestamp: presence, format, and freshness are checked together ---------------
-    ts_raw = headers.get(TIMESTAMP_HEADER)
+    ts_raw = _hget(TIMESTAMP_HEADER)
+    if ts_raw is None:
+        # _parse_timestamp already raises for a missing header; this is a belt-and-braces
+        # narrowing so the later compute_signature call is typed.
+        raise IntakeAuthError(f"missing timestamp header {TIMESTAMP_HEADER!r}")
     moment = _parse_timestamp(ts_raw)
     drift = now - moment
     if drift > window or -drift > window:
         raise IntakeAuthError("timestamp is outside the allowed replay window")
 
     # --- signature: prefix + digest ----------------------------------------------------
-    supplied_raw = headers.get(SIGNATURE_HEADER)
+    supplied_raw = _hget(SIGNATURE_HEADER)
     if supplied_raw is None or not supplied_raw.strip():
         raise IntakeAuthError(f"missing signature header {SIGNATURE_HEADER!r}")
     prefix, sep, supplied_digest = supplied_raw.partition("=")
     if not sep or prefix.strip().lower() != SIGNATURE_ALGORITHM:
         raise IntakeAuthError(f"signature header must be {SIGNATURE_ALGORITHM}=<hex digest>")
+    # ts_raw is non-None here: _parse_timestamp raised if the header was missing.
     expected = compute_signature(secret, ts_raw, body)
     expected_digest = expected.partition("=")[2]
     if not hmac.compare_digest(supplied_digest.lower(), expected_digest):
@@ -220,4 +237,3 @@ def resolve_idempotency_key(
 def generate_secret() -> str:
     """A fresh 256-bit random secret, for operators generating ``[sources.<slug>]`` entries."""
     return secrets.token_hex(32)
-

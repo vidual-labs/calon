@@ -7,23 +7,19 @@ covered by ``tests/api/test_intake.py`` once the route lands.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
-import sys
 import types
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
+from calon.config import SourceConfig
 from calon.intake.external import HmacSourceAdapter, IntakeRequest, SourceRegistry
 from calon.intake.signature import (
-    IDEMPOTENCY_HEADER,
     SIGNATURE_HEADER,
     TIMESTAMP_HEADER,
     IntakeAuthError,
     IntakeParseError,
-    SourceConfig,
     compute_signature,
 )
 
@@ -37,13 +33,18 @@ START = "2026-09-02T10:00:00+02:00"
 def make_request(
     *,
     slug: str = "test-source",
-    body: bytes | dict | str = {"start": START, "timezone": "Europe/Berlin",
-                                 "requester": {"name": "Ada Lovelace", "email": "ada@example.com"},
-                                 "subject": "Initial consultation"},
+    body: bytes | dict[str, object] | str | None = None,
     timestamp: int = NOW_SECONDS,
     secret: str = SECRET,
     extra_headers: dict[str, str] | None = None,
 ) -> IntakeRequest:
+    if body is None:
+        body = {
+            "start": START,
+            "timezone": "Europe/Berlin",
+            "requester": {"name": "Ada Lovelace", "email": "ada@example.com"},
+            "subject": "Initial consultation",
+        }
     if isinstance(body, bytes):
         raw = body
     elif isinstance(body, str):
@@ -103,7 +104,7 @@ class TestHmacSourceAdapter:
 
     def test_a_json_array_is_a_parse_error(self) -> None:
         adapter = HmacSourceAdapter("test-source", secret=SECRET)
-        request = make_request(body='[1, 2, 3]')
+        request = make_request(body="[1, 2, 3]")
         with pytest.raises(IntakeParseError, match="object"):
             adapter.parse(request)
 
@@ -135,7 +136,7 @@ class TestHmacSourceAdapter:
 class TestSourceRegistry:
     """The registry is the boot-time guard between operator config and a served source."""
 
-    def _package(self, submodules: dict[str, object]) -> types.ModuleType:
+    def _package(self, submodules: dict[str, types.ModuleType]) -> types.ModuleType:
         """A synthetic adapter package, patching sys.modules for the duration of the test."""
         import sys
 
@@ -146,7 +147,7 @@ class TestSourceRegistry:
             def __init__(self, modules: dict[str, types.ModuleType]) -> None:
                 self._modules = modules
 
-            def find_module(self, fullname: str, path=None) -> None:
+            def find_module(self, fullname: str, path: list[str] | None = None) -> None:
                 return None
 
         # Simplest possible seam: pre-register each synthetic submodule in sys.modules
@@ -168,12 +169,12 @@ class TestSourceRegistry:
         assert registry.get("nope") is None
         assert len(registry) == 0
 
-    def test_from_package_builds_the_registry_from_enabled_moduled_sources(self) -> None:
+    def test_from_config_builds_the_registry_from_enabled_moduled_sources(self) -> None:
         synthetic_mod = types.ModuleType("calon.intake.external.synthetic")
-        synthetic_mod.synthetic = HmacSourceAdapter("synthetic", secret=SECRET)
+        synthetic_mod.synthetic = HmacSourceAdapter("synthetic", secret=SECRET)  # type: ignore[attr-defined]
 
         package = self._package({"synthetic": synthetic_mod})
-        registry = SourceRegistry.from_package(
+        registry = SourceRegistry.from_config(
             package,
             source_configs={
                 "synthetic": SourceConfig(slug="synthetic", secret=SECRET, enabled=True),
@@ -184,45 +185,45 @@ class TestSourceRegistry:
         assert registry.get("disabled") is None
         assert len(registry) == 1
 
-    def test_from_package_rejects_an_enabled_slug_the_package_does_not_implement(self) -> None:
+    def test_from_config_rejects_an_enabled_slug_the_package_does_not_implement(self) -> None:
         # The operator enabled a source the adapter package does not implement: a wiring
         # error that must fail at boot, not at the first request.
         package = self._package({})
         with pytest.raises(RuntimeError, match="missing"):
-            SourceRegistry.from_package(
+            SourceRegistry.from_config(
                 package,
                 source_configs={"missing": SourceConfig(slug="missing", secret=SECRET)},
             )
 
-    def test_from_package_rejects_an_adapter_with_a_mismatched_slug(self) -> None:
+    def test_from_config_rejects_an_adapter_with_a_mismatched_slug(self) -> None:
         wrong_mod = types.ModuleType("calon.intake.external.right")
-        wrong_mod.right = HmacSourceAdapter("wrong-slug", secret=SECRET)
+        wrong_mod.right = HmacSourceAdapter("wrong-slug", secret=SECRET)  # type: ignore[attr-defined]
 
         package = self._package({"right": wrong_mod})
         with pytest.raises(RuntimeError, match="different slug"):
-            SourceRegistry.from_package(
+            SourceRegistry.from_config(
                 package,
                 source_configs={"right": SourceConfig(slug="right", secret=SECRET)},
             )
 
-    def test_from_package_rejects_a_module_that_exposes_no_adapter(self) -> None:
+    def test_from_config_rejects_a_module_that_exposes_no_adapter(self) -> None:
         bare_mod = types.ModuleType("calon.intake.external.bare")
 
         package = self._package({"bare": bare_mod})
         with pytest.raises(RuntimeError, match="no adapter"):
-            SourceRegistry.from_package(
+            SourceRegistry.from_config(
                 package,
                 source_configs={"bare": SourceConfig(slug="bare", secret=SECRET)},
             )
 
-    def test_from_package_uses_the_adapter_fallback_name_when_the_slug_name_is_unused(self) -> None:
+    def test_from_config_uses_the_adapter_fallback_name_when_the_slug_name_is_unused(self) -> None:
         # A module may name its adapter 'adapter' instead of repeating the slug.
         fallback_mod = types.ModuleType("calon.intake.external.fallback")
         adapter = HmacSourceAdapter("fallback", secret=SECRET)
-        fallback_mod.adapter = adapter
+        fallback_mod.adapter = adapter  # type: ignore[attr-defined]
 
         package = self._package({"fallback": fallback_mod})
-        registry = SourceRegistry.from_package(
+        registry = SourceRegistry.from_config(
             package,
             source_configs={"fallback": SourceConfig(slug="fallback", secret=SECRET)},
         )

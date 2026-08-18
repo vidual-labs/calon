@@ -13,14 +13,20 @@ payload and become a :class:`calon.schemas.BookingIntentIn`.
 
 from __future__ import annotations
 
+from datetime import datetime
 from types import ModuleType
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from calon.config import SourceConfig as OperatorSourceConfig
+    from calon.intake.signature import SourceConfig as SignatureSourceConfig
 
 from calon.intake.signature import (
-    IntakeAuthError,
     IntakeParseError,
-    SourceConfig,
     verify_signature,
+)
+from calon.intake.signature import (
+    SourceConfig as SignatureSourceConfig,
 )
 from calon.schemas import BookingIntentIn
 
@@ -53,7 +59,7 @@ class SourceAdapter(Protocol):
 
     slug: str
 
-    def verify(self, request: IntakeRequest, *, now) -> None:
+    def verify(self, request: IntakeRequest, *, now: datetime) -> None:
         """Raise :class:`IntakeAuthError` if the request is not really from this source.
 
         ``now`` is always a parameter, never read from the wall clock — the same rule as
@@ -63,7 +69,10 @@ class SourceAdapter(Protocol):
         ...
 
     def parse(self, request: IntakeRequest) -> BookingIntentIn:
-        """Translate the payload into the canonical intent; raise :class:`IntakeParseError` on a bad shape."""
+        """Translate the payload into the canonical intent.
+
+        Raises :class:`IntakeParseError` on a bad shape.
+        """
         ...
 
 
@@ -91,7 +100,7 @@ class HmacSourceAdapter:
         self.resource_slug = resource_slug
         self._window_seconds = timestamp_window_seconds
 
-    def verify(self, request: IntakeRequest, *, now) -> None:
+    def verify(self, request: IntakeRequest, *, now: datetime) -> None:
         """Verify one signed request at the given instant.
 
         ``now`` is always supplied explicitly by the route; a caller here that reads the
@@ -142,25 +151,27 @@ class SourceRegistry:
     by probing, so the set of enabled sources is not a hint oracle for an unauthenticated
     caller (ADR 0005, rule 4, and ADR 0012 in the security notes).
 
-    ``from_module`` is the seam the route uses to build a registry from an importable
-    package of adapter modules: for each slug the operator enabled, the package exposes a
-    module of the same name whose adapter is bound to the config. Tests exercise the same
-    seam with a synthetic ``types.ModuleType`` and no filesystem access.
+    ``from_config`` is the seam the boot uses to build a registry from an importable
+    package of adapter modules (see :meth:`from_config`).
     """
 
     def __init__(self, adapters: dict[str, HmacSourceAdapter | SourceAdapter]) -> None:
         self._adapters = dict(adapters)
-    def __init__(self, adapters: dict[str, HmacSourceAdapter | SourceAdapter]) -> None:
-        self._adapters = dict(adapters)
 
     @classmethod
-    def from_package(
+    def from_config(
         cls,
         package: ModuleType,
         *,
-        source_configs: dict[str, SourceConfig],
+        source_configs: dict[str, OperatorSourceConfig],
     ) -> SourceRegistry:
         """Build a registry from an importable adapter package (ADR 0005, rule 3).
+
+        ``source_configs`` is the operator-facing shape, ``dict[str,
+        :class:`calon.config.SourceConfig`]``, taken straight out of the ``[sources.
+        <slug>]`` table. Each enabled entry is resolved into the per-adapter runtime
+        :class:`~calon.intake.signature.SourceConfig` (the TOML seconds become a
+        resolved ``timedelta`` window) below.
 
         For each slug the operator enabled, the package must expose a submodule of the
         same name (``[sources.demo]`` looks under ``package.demo``); that submodule
@@ -180,10 +191,20 @@ class SourceRegistry:
         """
         import importlib
         import sys
+        from datetime import timedelta
 
+        resolved: dict[str, SignatureSourceConfig] = {}
         enabled = {slug: cfg for slug, cfg in source_configs.items() if cfg.enabled}
+        for slug, cfg in enabled.items():
+            resolved[slug] = SignatureSourceConfig(
+                slug=slug,
+                secret=cfg.secret,
+                resource_slug=cfg.resource_slug,
+                timestamp_window=timedelta(seconds=cfg.timestamp_window_seconds),
+                enabled=True,
+            )
         adapters: dict[str, HmacSourceAdapter | SourceAdapter] = {}
-        for slug in sorted(enabled, reverse=True):
+        for slug in sorted(resolved, reverse=True):
             module_name = f"{package.__name__}.{slug}"
             module = sys.modules.get(module_name)
             if module is None:

@@ -153,12 +153,19 @@ class TestVerifySignature:
         # The caller should be able to distinguish "not signed correctly" from "signed
         # but stale" without an oracle: a wrong digest and a stale timestamp both fail,
         # and neither message names the other's header.
+        bad_digest_headers = dict(signed_headers())
+        bad_digest_headers[SIGNATURE_HEADER] = "sha256=" + "0" * 64
         with pytest.raises(IntakeAuthError) as bad_digest:
-            verify_signature(dict(signed_headers(), **{SIGNATURE_HEADER: "sha256=" + "0" * 64}), BODY, secret=SECRET, now=NOW)
+            verify_signature(bad_digest_headers, BODY, secret=SECRET, now=NOW)
         assert TIMESTAMP_HEADER not in str(bad_digest.value)
 
         with pytest.raises(IntakeAuthError) as stale:
-            verify_signature(signed_headers(timestamp=NOW_SECONDS - 3600), BODY, secret=SECRET, now=NOW)
+            verify_signature(
+                signed_headers(timestamp=NOW_SECONDS - 3600),
+                BODY,
+                secret=SECRET,
+                now=NOW,
+            )
         assert "does not match" not in str(stale.value)
 
 

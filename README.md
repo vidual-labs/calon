@@ -14,11 +14,13 @@ handoff that works with any major calendar.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-> **Status: pre-alpha.** Phase 4 is complete — calon runs, exposes a public booking
+> **Status: pre-alpha.** Phases 4 and 6 are complete — calon runs, exposes a public booking
 > form at `/book`, hands off accepted bookings to the requester's calendar (ICS +
 > Google / Outlook deeplinks + a login-gated `.ics` endpoint), includes a login-gated
-> operator panel, and ships as a Docker container. A release (`0.1.0`) is still to come.
-> Do not use this in production. See the [roadmap](#roadmap).
+> operator panel, ships as a Docker container, and accepts signed booking requests from
+> external sources (`POST /api/v1/<slug>`). External-intake adapters ship behind a
+> source-adapter boundary; no provider-specific adapter ships in `0.1.0`. A release
+> (`0.1.0`, phase 7) is still to come. Do not use this in production. See the [roadmap](#roadmap).
 
 ---
 
@@ -56,7 +58,7 @@ The first release (`0.1.0`) does exactly this, end to end:
       rather than guess
 - [x] Return a structured **accept / reject decision**, with next-available suggestions
 - [x] Produce a generic **add-to-calendar** result that works across calendar ecosystems
-- [ ] Expose a source-agnostic intake boundary that external systems can plug into
+- [x] Expose a source-agnostic intake boundary that external systems can plug into
 - [x] Keep a minimal audit trail of every decision
 - [x] Ship as a single Docker container with an **operator login** for the personal-data
      endpoints (the web panel and the `.ics` file)
@@ -208,13 +210,25 @@ See [`docs/calendar-handoff.md`](docs/calendar-handoff.md).
 
 calon is **standalone first**. It is fully usable with zero external services configured.
 
-External systems — OpenFlow is one example among many — can submit booking requests later
-via a signed webhook. A small **source adapter** translates the provider's payload into
-calon's canonical booking intent, and from that point the request is indistinguishable from
-a native one. Adapters translate; adapters never decide. The scheduling core has no
+External systems — OpenFlow is one example among many — submit booking requests via a signed
+webhook at `POST /api/v1/<slug>`. A small **source adapter** translates the provider's payload
+into calon's canonical booking intent, and from that point the request is indistinguishable
+from a native one. Adapters translate; adapters never decide. The scheduling core has no
 knowledge of any provider.
 
-See [`docs/external-intake.md`](docs/external-intake.md).
+Requests are authenticated with HMAC-SHA256 over the raw body (per-source shared secret,
+timestamp window against replay, constant-time compare). A retried request is **idempotent**:
+calon stores the decision it first produced on the intent row and replays that stored answer
+verbatim — it does not re-evaluate the rules, so a retry cannot turn a stored rejection into
+an acceptance because the calendar has since moved. Unknown or disabled slugs return `404`
+with a constant body; bad signatures return `401`.
+
+Sources are disabled by default and added one `[sources.<slug>]` config block at a time.
+No provider-specific adapter ships in `0.1.0` (the framework is proven with a synthetic test
+source; the first real adapter lands in `0.2.0`).
+
+See [`docs/external-intake.md`](docs/external-intake.md) and
+[ADR 0012](docs/adr/0012-external-intake-final.md).
 
 ## Roadmap
 
@@ -225,7 +239,7 @@ See [`docs/external-intake.md`](docs/external-intake.md).
 | 2 | Persistence, audit log, native intake API, availability query | — | done |
 | 3 | Calendar handoff: ICS export and provider deeplinks | — | done |
 | 4 | Operator web panel + public booking form | — | done |
-| 5 | External intake framework: adapters, HMAC, idempotency | — | |
+| 5 | External intake framework: adapters, HMAC, idempotency | — | done |
 | 6 | Docker packaging and self-hosting docs | — | done |
 | 7 | **First release** | `0.1.0` | next |
 | 8 | First real provider adapter, once a genuine payload exists | `0.2.0` | |
