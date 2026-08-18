@@ -12,6 +12,20 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- _Nothing yet._
+
+### Changed
+
+- _Nothing yet._
+
+### Fixed
+
+- _Nothing yet._
+
+## [0.1.0] - 2026-08-18
+
+### Added
+
 - Initial repository foundation: `README.md`, `CLAUDE.md`, `CHANGELOG.md`, and `LICENSE`
   (GNU AGPL-3.0-or-later).
 - Contribution, security, and code-of-conduct policies, plus issue and pull request
@@ -84,14 +98,6 @@ per user-visible change, describing the effect rather than the implementation.
   concrete decisions (endpoint path, auth scheme, replay semantics, boot-time registry).
 - An ASCII logo at the top of `README.md`.
 
-### Changed
-
-- _Nothing yet._
-
-### Fixed
-
-- _Nothing yet._
-
 ### Security
 
 - New `CALON_LOGIN` runtime setting (see `.env.example`). When set, it gates the operator
@@ -117,4 +123,5 @@ section above it, drop any sections that are still empty from the released versi
 update the link definitions below.
 -->
 
-[Unreleased]: https://github.com/vidual-labs/calon/compare/main...HEAD
+[Unreleased]: https://github.com/vidual-labs/calon/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/vidual-labs/calon/releases/tag/v0.1.0

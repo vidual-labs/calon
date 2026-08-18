@@ -174,6 +174,6 @@ automatically at startup — take a backup before upgrading.
   audit history.
 - The audit log is append-only and grows slowly; it is the record of why calon accepted or
   rejected any given request.
-- The booking form has a per-IP rate limit and a honeypot field. If your instance is public
-  and you see abuse, tighten `CALON_RATE_LIMIT_PER_MINUTE` and add a rate limit at the proxy
-  as well.
+- The booking form has no built-in per-IP rate limit or honeypot field in `0.1.0`. If your
+  instance is public and you see abuse, add a rate limit at the reverse proxy in front of
+  calon; that is where per-IP throttling belongs for a self-hosted instance.
