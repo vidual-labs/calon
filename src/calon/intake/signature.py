@@ -114,24 +114,37 @@ class SourceContext:
 def compute_signature(secret: str, timestamp: str, body: bytes) -> str:
     """Return the ``sha256=<hex digest>`` value for the given raw request.
 
-    The digest covers exactly the bytes ``<timestamp>.<raw body>`` — an ASCII timestamp,
-    a single byte of ``.`` (0x2E, no space), then the body exactly as it arrived on the
-    wire. The ``.`` is a length separator, the same trick ``AWS SigV4`` and
-    ``Stripe``-style webhooks use: without it, ``("17881080001", b"")`` and
+    The digest covers exactly the bytes ``<timestamp>.<raw body>`` — the ASCII digits of
+    the timestamp, a single byte of ``.`` (0x2E, no space), then the body exactly as it
+    arrived on the wire. The ``.`` is a length separator, the same trick ``AWS SigV4``
+    and ``Stripe``-style webhooks use: without it, ``("17881080001", b"")`` and
     ``("1788108000", b"1")`` would hash to the same value, because both concatenate to
-    ``17881080001``. Callers sign with the same preimage — in Python::
+    ``17881080001``. Non-ASCII characters in the timestamp are a programming error, not
+    input to worry about — a timestamp is integer seconds — and are rejected here rather
+    than silently encoded as a different string.
 
-        hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256)
+    Callers sign with the same preimage — in Python::
+
+        hmac.new(secret.encode(), timestamp.encode("ascii") + b"." + body, hashlib.sha256)
 
     — or the equivalent in their language of choice. Re-serializing the payload first
     would produce a different digest, so the raw body is the contract; do not JSON-parse
     before signing (ADR 0005).
+
+    The body is not interpreted: it is the bytes of the request as they arrived. This
+    matters for the raw-byte contract callers depend on, and is why a non-UTF-8 body
+    must still sign, not raise, here — the parse step, not the signature, is where a
+    bad body gets rejected, and only *after* the caller's identity has been established.
     """
     if not secret:
         raise ValueError("secret must be a non-empty string")
     if not timestamp:
         raise ValueError("timestamp must be a non-empty string")
-    data = f"{timestamp}.".encode("ascii") + body
+    try:
+        ts_bytes = timestamp.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError("timestamp must be ASCII (integer seconds)") from exc
+    data = ts_bytes + b"." + body
     digest = hmac.new(secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
     return f"sha256={digest}"
 
