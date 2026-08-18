@@ -14,13 +14,14 @@ handoff that works with any major calendar.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-> **Status: pre-alpha.** Phases 4 and 6 are complete — calon runs, exposes a public booking
-> form at `/book`, hands off accepted bookings to the requester's calendar (ICS +
+> **Status: `0.1.0` (first release).** Phase 7 is complete — calon runs, exposes a public
+> booking form at `/book`, hands off accepted bookings to the requester's calendar (ICS +
 > Google / Outlook deeplinks + a login-gated `.ics` endpoint), includes a login-gated
 > operator panel, ships as a Docker container, and accepts signed booking requests from
 > external sources (`POST /api/v1/<slug>`). External-intake adapters ship behind a
-> source-adapter boundary; no provider-specific adapter ships in `0.1.0`. A release
-> (`0.1.0`, phase 7) is still to come. Do not use this in production. See the [roadmap](#roadmap).
+> source-adapter boundary; no provider-specific adapter ships in `0.1.0` — the first real
+> one lands in `0.2.0`. Do not use this in production before hardening (TLS, `CALON_LOGIN`).
+> See the [roadmap](#roadmap).
 
 ---
 
@@ -96,7 +97,7 @@ from an external system travel the exact same path.
 
 ## Quick start
 
-> ⚠️ **Pre-alpha.** The API below works today, and the instance ships as a Docker
+> The API below works today, and the instance ships as a Docker
 > container with a public booking form at `/book`.
 
 ```bash
@@ -241,7 +242,7 @@ See [`docs/external-intake.md`](docs/external-intake.md) and
 | 4 | Operator web panel + public booking form | — | done |
 | 5 | External intake framework: adapters, HMAC, idempotency | — | done |
 | 6 | Docker packaging and self-hosting docs | — | done |
-| 7 | **First release** | `0.1.0` | next |
+| 7 | **First release** | `0.1.0` | done |
 | 8 | First real provider adapter, once a genuine payload exists | `0.2.0` | |
 | 9 | Optional resource calendar sync: Google Calendar & Microsoft 365 free/busy check plus write-back of accepted bookings, behind a `CalendarProvider` interface, opt-in per resource | `0.3.0` | |
 
