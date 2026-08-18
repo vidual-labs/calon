@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>calon — Book a slot</title>
+  <style>
+    :root { --bg:#0f1116; --panel:#181c24; --fg:#e6e8ee; --dim:#8a93a6;
+            --accent:#5aa9ff; --ok:#51cf66; --err:#ff6b6b; --border:#242a36; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--fg);
+           font:15px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif; }
+    header { display:flex; align-items:center; justify-content:space-between;
+             padding:16px 28px; border-bottom:1px solid var(--border); }
+    header .brand { font-size:18px; font-weight:600; }
+    header nav a { color:var(--dim); text-decoration:none; font-size:13px; }
+    header nav a:hover { color:var(--fg); }
+    main { max-width:540px; margin:0 auto; padding:32px 20px 60px; }
+    h1 { font-size:22px; font-weight:600; margin:0 0 4px; }
+    .sub { color:var(--dim); font-size:13px; margin-bottom:28px; }
+
+    /* form */
+    .field { margin-bottom:18px; }
+    label { display:block; font-size:13px; color:var(--dim); margin-bottom:5px; }
+    input, textarea { width:100%; padding:10px 12px; border-radius:8px;
+       border:1px solid #2a3140; background:#0c0f15; color:var(--fg);
+       font-size:15px; outline:none; }
+    input:focus, textarea:focus { border-color:var(--accent); }
+    textarea { min-height:72px; resize:vertical; }
+    .row { display:flex; gap:14px; }
+    .row .field { flex:1; }
+    button[type=submit] { margin-top:8px; width:100%; padding:11px 0; border:none;
+       border-radius:8px; background:var(--accent); color:#0b1322;
+       font-weight:600; font-size:14px; cursor:pointer; }
+    button[type=submit]:hover { filter:brightness(1.06); }
+    .hint { font-size:12px; color:var(--dim); margin-top:4px; }
+
+    /* banners */
+    .banner { margin-bottom:24px; padding:12px 14px; border-radius:8px; font-size:14px; }
+    .banner.error    { background:rgba(255,107,107,.12); border:1px solid rgba(255,107,107,.4);  color:var(--err); }
+    .banner.success  { background:rgba(81,207,102,.12);  border:1px solid rgba(81,207,102,.4);   color:var(--ok); }
+    .banner ul { margin:6px 0 0; padding-left:18px; }
+    .banner li { margin-bottom:2px; }
+
+    /* success block */
+    .success-block { margin-top:20px; }
+    .success-block .slot { font-size:16px; font-weight:600; margin-bottom:12px; }
+    .success-block .slot .mono { font-family:"SF Mono",Monaco,Menlo,Consolas,monospace; font-size:14px; color:var(--fg); }
+    .cal-links { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+    .cal-links a { display:inline-block; padding:8px 14px; border-radius:8px;
+       text-decoration:none; font-size:13px; font-weight:500; }
+    .cal-links a.ics    { background:rgba(90,169,255,.14); color:var(--accent); border:1px solid rgba(90,169,255,.4); }
+    .cal-links a.google { background:rgba(81,207,102,.14); color:var(--ok);     border:1px solid rgba(81,207,102,.4); }
+    .cal-links a.outlook{ background:rgba(255,180,80,.14); color:#ffb450;       border:1px solid rgba(255,180,80,.4); }
+    .cal-links a:hover { filter:brightness(1.1); }
+    .booking-id { margin-top:10px; font-size:12px; color:var(--dim); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">calon <span style="color:var(--dim);font-size:13px;margin-left:8px;">{{ instance_name }}</span></div>
+    <nav>
+      <a href="/docs">API docs</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1>Book a slot</h1>
+    <div class="sub">{{ instance_name }} · {{ resource_name }} · times in {{ timezone }}</div>
+
+    {# ---- validation error banner (form-level) ---- #}
+    {% if errors %}
+    <div class="banner error">
+      <strong>Please fix the following:</strong>
+      <ul>
+        {% for err in errors %}<li>{{ err }}</li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {# ---- rejection banner (scheduling decision) ---- #}
+    {% if decision and decision.outcome == "rejected" %}
+    <div class="banner error">
+      <strong>This time cannot be booked.</strong>
+      <p style="margin:6px 0 0;">{{ decision.reason }}</p>
+      {% if decision.violations %}
+      <ul>
+        {% for v in decision.violations %}<li>{{ v.message }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% if decision.suggestions %}
+      <p style="margin:10px 0 0;"><strong>Next available:</strong></p>
+      <ul>
+        {% for s in decision.suggestions %}
+        <li>{{ s.start.strftime("%a %d %b %Y %H:%M") }} – {{ s.end.strftime("%H:%M") }} ({{ s.timezone }})</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# ---- success block ---- #}
+    {% if success %}
+    <div class="banner success">
+      <strong>Booked.</strong> Your slot is confirmed — add it to your calendar below.
+    </div>
+    <div class="success-block">
+      <div class="slot">
+        <span class="mono">{{ success.start }} – {{ success.end }}</span>
+        <span style="color:var(--dim);font-size:13px;margin-left:8px;">({{ success.timezone }})</span>
+      </div>
+      <div class="cal-links">
+        {% if success.handoff %}
+        <a class="ics"     href="{{ success.handoff.ics_url }}" target="_blank">Download .ics</a>
+        <a class="google"  href="{{ success.handoff.links.google }}" target="_blank">Google Calendar</a>
+        <a class="outlook" href="{{ success.handoff.links.outlook_office }}" target="_blank">Outlook</a>
+        {% endif %}
+      </div>
+      <div class="booking-id">Booking reference: <span style="font-family:monospace;">{{ success.booking_id }}</span></div>
+    </div>
+    <p style="margin-top:28px;color:var(--dim);font-size:13px;">
+      Need to book something else?
+      <form method="post" action="/book" style="display:inline">
+        <button type="submit" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:13px;padding:0;text-decoration:underline;">Book another slot</button>
+      </form>
+    </p>
+    {% else %}
+
+    {# ---- the form (always shown on GET and on rejection) ---- #}
+    <form method="post" action="/book">
+      <div class="row">
+        <div class="field">
+          <label for="name">Your name <span style="color:var(--err)">*</span></label>
+          <input type="text" id="name" name="name" maxlength="200" required
+                 value="{{ form.name if form else '' }}" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="email">Email <span style="color:var(--err)">*</span></label>
+          <input type="email" id="email" name="email" maxlength="320" required
+                 value="{{ form.email if form else '' }}" autocomplete="email">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="phone">Phone <span style="color:var(--dim)">optional</span></label>
+        <input type="tel" id="phone" name="phone" maxlength="64"
+               value="{{ form.phone if form else '' }}" autocomplete="tel">
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="date">Date <span style="color:var(--err)">*</span></label>
+          <input type="date" id="date" name="date" required
+                 value="{{ form.date if form else '' }}">
+        </div>
+        <div class="field">
+          <label for="time">Time <span style="color:var(--err)">*</span></label>
+          <input type="time" id="time" name="time" step="900" required
+                 value="{{ form.time if form else '' }}">
+          <div class="hint">Booking window: {{ window_start }} – {{ window_end }} {{ timezone }} · {{ duration_label }} min</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="subject">Subject <span style="color:var(--err)">*</span></label>
+        <input type="text" id="subject" name="subject" maxlength="300" required
+               value="{{ form.subject if form else '' }}">
+      </div>
+
+      <div class="field">
+        <label for="notes">Notes <span style="color:var(--dim)">optional</span></label>
+        <textarea id="notes" name="notes" maxlength="5000"
+                  placeholder="Anything the operator should know before the booking">{{ form.notes if form else '' }}</textarea>
+      </div>
+
+      <button type="submit" name="_submit" value="book">Request this slot</button>
+    </form>
+    {% endif %}
+
+  </main>
+</body>
+</html>

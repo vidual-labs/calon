@@ -58,6 +58,13 @@ per user-visible change, describing the effect rather than the implementation.
   the session is an HTTP-only, memory-only cookie. Gated by the same `CALON_LOGIN` and
   `CALON_API_KEY` (optional Bearer) as the `.ics` endpoint. See
   [ADR 0010](adr/0010-operator-login-and-web-panel.md).
+- **Public booking form (phase 4).** A public, server-rendered web form at `/book` that
+  posts to the same `submit_intent` path as the API. No login required, no JavaScript.
+  On acceptance the success page shows the booked slot in the requester's timezone and
+  links to the calendar handoff (`.ics`, Google Calendar, Outlook). On rejection the form
+  is re-displayed with all entered values preserved and the domain layer's violation
+  messages and up-to-three "next available" suggestions rendered inline. See
+  [ADR 0011](adr/0011-public-booking-form.md).
 - **Docker packaging (phase 6).** `Dockerfile` (multi-stage, Python 3.13, non-privileged
   user, `/healthz` healthcheck) and `docker-compose.yml` (single service, persistent
   `data` volume for the SQLite file, `config/` mounted read-only). Ship with
