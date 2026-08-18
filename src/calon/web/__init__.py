@@ -1,20 +1,28 @@
-"""The operator-facing web panel.
+"""The operator-facing web panel and the public booking form.
 
-This is the human UI for the operator. It does **not** replace the API — ``POST
-/api/v1/bookings`` is still open — but it is the only place where a human can see the
-bookings list and download the ``.ics`` files.
+This is the human-facing UI. It does **not** replace the API — ``POST
+/api/v1/bookings`` is still the machine-facing path — but it is where a person
+opens a browser and books something.
 
 Routes:
-* ``GET  /login``     — the login form (the only unauthenticated page).
+* ``GET  /book``      — the public booking form (no login required).
+* ``POST /book``      — submit the form; renders success or rejection in place.
+* ``GET  /login``     — the login form (the only other unauthenticated page).
 * ``POST /login``     — verifies the entered login and sets a session cookie.
 * ``POST /logout``    — ends the session and redirects to the login form.
-* ``GET  /bookings``  — the dashboard. Gated by :func:`calon.api.deps.get_authorised_operator`.
+* ``GET  /bookings``  — the operator dashboard.
+* Gated by :func:`calon.api.deps.get_authorised_operator`.
 """
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote_plus
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -23,10 +31,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from calon.api.deps import AuthorisedOperator, DatabaseDep, SettingsDep
+from calon.calendarkit import build_deeplinks, event_uid
+from calon.clock import utcnow
+from calon.config import Settings
+from calon.intake import native
 from calon.models import Booking, BookingIntent
+from calon.schemas import CalendarHandoff, CalendarLinksOut
 from calon.security import SESSION_COOKIE
+from calon.services import booking_service
 
 __all__ = ["router"]
+
+logger = logging.getLogger("calon")
 
 router = APIRouter(tags=["web"])
 
@@ -35,7 +51,219 @@ templates = Jinja2Templates(_TEMPLATES_DIR)
 
 
 # ---------------------------------------------------------------------------
-# Login
+# Public booking form  (phase 4)
+# ---------------------------------------------------------------------------
+
+
+def _book_ctx(
+    request: Request,
+    *,
+    form: dict[str, str] | None = None,
+    errors: list[str] | None = None,
+    decision: Mapping[str, object] | None = None,
+    success: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Assemble the template context for book.html."""
+    return {
+        **_form_context(request),
+        "form": form,
+        "errors": errors or [],
+        "decision": decision,
+        "success": success,
+    }
+
+
+def _form_context(request: Request) -> dict[str, Any]:
+    """Build the template context shared by GET and POST /book."""
+    config = request.app.state.config
+    policy = config.policy
+    return {
+        "instance_name": config.instance_name,
+        "resource_name": config.resource_name,
+        "timezone": config.resource.timezone,
+        "window_start": policy.window_start.strftime("%H:%M"),
+        "window_end": policy.window_end.strftime("%H:%M"),
+        "duration_label": str(policy.default_duration_min),
+    }
+
+
+def _build_handoff_for_form(
+    booking: Booking, intent: BookingIntent, settings: Settings
+) -> CalendarHandoff:
+    """Build the handoff for the success page, using the same logic as api/v1/bookings."""
+    from calon.calendarkit import CalendarEvent, ics_filename
+
+    event = CalendarEvent(
+        booking_id=booking.id,
+        instance_host=settings.instance_host,
+        sequence=booking.ics_sequence or 0,
+        title=intent.subject,
+        description=intent.notes or "",
+        location=None,
+        start_utc=booking.start_utc,
+        end_utc=booking.end_utc,
+        timezone=intent.requester_timezone,
+    )
+    links = build_deeplinks(event)
+    return CalendarHandoff(
+        ics_url=f"{settings.base_url}/api/v1/bookings/{booking.id}/calendar.ics",
+        ics_filename=ics_filename(booking.id),
+        uid=event_uid(booking.id, settings.instance_host),
+        sequence=booking.ics_sequence or 0,
+        links=CalendarLinksOut(**links),
+    )
+
+
+@router.get("/book", name="book_form", response_class=HTMLResponse)
+def book_form_get(request: Request) -> HTMLResponse:
+    """Render the public booking form. No login required."""
+    return templates.TemplateResponse(
+        request=request,
+        name="book.html",
+        context=_book_ctx(request, form=None, errors=[]),
+    )
+
+
+@router.post("/book", name="book_form_submit", response_class=HTMLResponse)
+async def book_form_post(
+    request: Request,
+    database: DatabaseDep,
+    settings: SettingsDep,
+) -> HTMLResponse:
+    """Handle a submitted booking form.
+
+    Builds a ``BookingIntentIn``, calls ``submit_intent`` exactly as the API does
+    (``source="native"``), and renders the result in place — success with handoff
+    links on acceptance, or the form re-displayed with the rejection reasons and
+    all user-entered values preserved.
+    """
+    form = await request.form()
+    form_data: dict[str, str] = {}
+    errors: list[str] = []
+
+    for field_name in ("name", "email", "phone", "date", "time", "subject", "notes"):
+        value = form.get(field_name, "")
+        form_data[field_name] = value.strip() if isinstance(value, str) else ""
+
+    # --- validate required fields at the form layer ---
+    if not form_data["name"]:
+        errors.append("Your name is required.")
+    if not form_data["email"]:
+        errors.append("An email address is required.")
+    if not form_data["date"]:
+        errors.append("A date is required.")
+    if not form_data["time"]:
+        errors.append("A time is required.")
+    if not form_data["subject"]:
+        errors.append("A subject is required.")
+
+    if errors:
+        return templates.TemplateResponse(
+            request=request,
+            name="book.html",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context=_book_ctx(request, form=form_data, errors=errors),
+        )
+
+    # --- build an aware datetime in the resource's timezone ---
+    resource_tz = request.app.state.config.resource.timezone
+    zone = ZoneInfo(resource_tz)
+    try:
+        date_part = form_data["date"]  # "2026-09-02"
+        time_part = form_data["time"]  # "10:00"
+        local_dt = datetime.fromisoformat(f"{date_part}T{time_part}").replace(tzinfo=zone)
+    except ValueError:
+        errors.append("The date or time you entered could not be understood.")
+        return templates.TemplateResponse(
+            request=request,
+            name="book.html",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context=_book_ctx(request, form=form_data, errors=errors),
+        )
+
+    # --- build the canonical intent ---
+    from calon.schemas import BookingIntentIn, RequesterIn
+
+    try:
+        intent_in = BookingIntentIn(
+            resource_slug=request.app.state.config.resource.slug,
+            start=local_dt,
+            timezone=resource_tz,
+            requester=RequesterIn(
+                name=form_data["name"],
+                email=form_data["email"],
+                phone=form_data["phone"] or None,
+            ),
+            subject=form_data["subject"],
+            notes=form_data["notes"] or None,
+        )
+    except Exception as exc:
+        errors.append(f"The request could not be processed: {exc}")
+        return templates.TemplateResponse(
+            request=request,
+            name="book.html",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context=_book_ctx(request, form=form_data, errors=errors),
+        )
+
+    # --- submit through the single downstream path ---
+    now = utcnow()
+    raw_payload = intent_in.model_dump(mode="json")
+
+    with database.write() as session:
+        submission = booking_service.submit_intent(
+            session,
+            intent_in,
+            source=native.NATIVE_SOURCE,
+            now=now,
+            raw_payload=raw_payload,
+            instance_host=settings.instance_host,
+        )
+        success_ctx = None
+        if submission.booking is not None:
+            booking_row = session.get(Booking, submission.booking.id)
+            intent_row = session.get(BookingIntent, submission.intent_id)
+            if booking_row and intent_row:
+                handoff = _build_handoff_for_form(booking_row, intent_row, settings)
+                success_ctx = {
+                    "start": submission.booking.start_utc.astimezone(zone).strftime(
+                        "%a %d %b %Y %H:%M"
+                    ),
+                    "end": submission.booking.end_utc.astimezone(zone).strftime("%H:%M"),
+                    "timezone": resource_tz,
+                    "booking_id": submission.booking.id,
+                    "handoff": handoff,
+                }
+
+    # --- render ---
+    if submission.accepted:
+        context = _book_ctx(request, success=success_ctx)
+    else:
+        # Build a lightweight decision dict for the template (mirrors DecisionOut).
+        violation_msgs = [{"message": v.message} for v in submission.decision.violations]
+        sug_items = submission.decision.suggestions
+        suggestions = [
+            {
+                "start": s.start.astimezone(ZoneInfo(s.timezone)),
+                "end": s.end.astimezone(ZoneInfo(s.timezone)),
+                "timezone": s.timezone,
+            }
+            for s in sug_items
+        ]
+        decision = {
+            "outcome": "rejected",
+            "code": submission.decision.code.value,
+            "reason": submission.decision.reason,
+            "violations": violation_msgs,
+            "suggestions": suggestions,
+        }
+        context = _book_ctx(request, form=form_data, decision=decision)
+
+    return templates.TemplateResponse(request=request, name="book.html", context=context)
+
+
+# ---------------------------------------------------------------------------
+# Operator login
 # ---------------------------------------------------------------------------
 
 
