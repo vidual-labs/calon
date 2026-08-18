@@ -50,10 +50,10 @@ calon **is not**:
 - a restaurant or hotel reservation suite (no tables, covers, room inventory, rate plans)
 - a generic automation or workflow platform
 - an OpenFlow plugin, or dependent on any external lead source
-- a general-purpose calendar sync or mirroring tool — the optional Google Calendar /
-  Microsoft 365 integration only checks free/busy for the booked resource and writes
-  calon-originated bookings; it does not two-way sync arbitrary events, calendars, or
-  attendees
+- a general-purpose calendar sync engine or mirroring tool — the optional Google
+  Calendar / Microsoft 365 integration only checks free/busy for the booked resource and
+  writes calon-originated bookings; it does not two-way sync arbitrary events, calendars,
+  or attendees
 
 **If a request implies CRM, workflow automation, payments, multi-tenancy, or AI features:
 stop and flag it as out of scope before writing any code.** Do not implement it "just a

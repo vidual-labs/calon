@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from calon.domain import AvailabilityPolicy, BlackoutPeriod, Resource
@@ -39,6 +39,7 @@ __all__ = [
     "ConfigError",
     "OperatorConfig",
     "Settings",
+    "SourceConfig",
     "load_operator_config",
 ]
 
@@ -119,6 +120,92 @@ class CalendarConfig:
     organizer_email: str = ""
 
 
+# --------------------------------------------------------------------------------------
+# [sources.<slug>] — external intake framework (ADR 0005; security details in ADR 0012)
+# --------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SourceConfig:
+    """One configured external source, as the operator wrote it in ``[sources.<slug>]``.
+
+    Deliberately *not* the same type as
+    :class:`calon.intake.signature.SourceConfig` — that one is the per-adapter runtime
+    value object, with a resolved window, that the adapters receive. This one is the
+    operator-facing shape, straight out of the file. The ``_sources`` reader below is
+    the single place that knows both, and every per-source invariant is checked here,
+    at startup (never mid-request).
+
+    ``enabled`` defaults to ``True``: a table with a non-empty ``secret`` is presumed to
+    be meant to serve traffic. An operator who wants to configure a source now and only
+    turn it on later (e.g. while the adapter module is still under review) sets
+    ``enabled = false`` — that is the only way a source does not serve traffic, and it
+    is also the way to keep an old source's config around for reference after one is
+    retired.
+    """
+
+    slug: str
+    secret: str
+    resource_slug: str = "default"
+    timestamp_window_seconds: int = 300
+    enabled: bool = True
+
+
+def _sources(
+    path: Path, raw: dict[str, Any]
+) -> dict[str, SourceConfig]:
+    """Parse the ``[sources.<slug>]`` block into validated per-source configs.
+
+    The top-level ``[sources]`` table is the only one with a free-form subkey per source,
+    which is why the :func:`_reject_unknown` call at the top of :func:`load_operator_config`
+    does not apply here: the slug is the operator's choice and is a valid TOML key, so it
+    is already constrained by the TOML grammar, and the per-source invariants are checked
+    by this function specifically.
+    """
+    sources_raw = raw.get("sources", {})
+    if not isinstance(sources_raw, dict):
+        raise ConfigError(f"{path}: [sources] must be a table of per-source tables")
+
+    sources: dict[str, SourceConfig] = {}
+    for slug, entry in sources_raw.items():
+        if not isinstance(entry, dict):
+            raise ConfigError(f"{path}: [sources.{slug}] must be a table")
+
+        allowed = frozenset(
+            {"secret", "resource_slug", "timestamp_window_seconds", "enabled"}
+        )
+        _reject_unknown(path, f"sources.{slug}", entry, allowed)
+
+        label = f"[sources.{slug}] "
+        secret = entry.get("secret")
+        if not isinstance(secret, str) or not secret:
+            raise ConfigError(
+                f"{path}: {label}secret is required and must be a non-empty string; "
+                f"generate one with: uv run python -c \"import secrets; "
+                f"print(secrets.token_hex(32))\""
+            )
+        if "resource_slug" in entry and not isinstance(entry["resource_slug"], str):
+            raise ConfigError(f"{path}: {label}resource_slug must be a string")
+        if "timestamp_window_seconds" in entry:
+            window = _int(path, entry, "timestamp_window_seconds", 300)
+            if window <= 0:
+                raise ConfigError(f"{path}: {label}timestamp_window_seconds must be > 0")
+        else:
+            window = 300
+        if "enabled" in entry and not isinstance(entry["enabled"], bool):
+            raise ConfigError(f"{path}: {label}enabled must be true or false")
+        enabled = entry.get("enabled", True)
+
+        sources[slug] = SourceConfig(
+            slug=slug,
+            secret=secret,
+            resource_slug=entry.get("resource_slug", "default"),
+            timestamp_window_seconds=window,
+            enabled=enabled,
+        )
+    return sources
+
+
 @dataclass(frozen=True, slots=True)
 class OperatorConfig:
     """Everything the operator decides, resolved into the domain's own value objects."""
@@ -146,6 +233,7 @@ class OperatorConfig:
     )
     blackouts: tuple[BlackoutPeriod, ...] = ()
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
+    sources: dict[str, SourceConfig] = field(default_factory=dict)
 
 
 _INSTANCE_KEYS = frozenset({"name", "timezone"})
@@ -166,9 +254,11 @@ _AVAILABILITY_KEYS = frozenset(
 )
 _BLACKOUT_KEYS = frozenset({"date", "start", "end", "reason"})
 _CALENDAR_KEYS = frozenset({"event_title", "location", "organizer_name", "organizer_email"})
-# ``[sources]`` is read by the external intake framework in phase 5. It is tolerated here
-# rather than rejected, so an operator can configure a source before the code that uses it
-# ships without their instance refusing to boot.
+# ``[sources]`` is read by the external intake framework; see :func:`_sources` for the
+# per-source invariants. The section is parsed at startup (never mid-request) and an
+# operator can configure a source here before its adapter module is added, because
+# ``SourceRegistry.from_package`` only wires the sources the adapter package implements
+# and leaves the rest disabled.
 _TOP_LEVEL_KEYS = frozenset(
     {"instance", "resource", "availability", "blackout", "calendar", "sources"}
 )
@@ -189,39 +279,42 @@ def load_operator_config(path: Path | None) -> OperatorConfig:
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"{path}: {exc}") from exc
 
-    _reject_unknown(path, "", raw, _TOP_LEVEL_KEYS)
-
-    instance = _table(path, raw, "instance", _INSTANCE_KEYS)
-    resource_raw = _table(path, raw, "resource", _RESOURCE_KEYS)
-    availability = _table(path, raw, "availability", _AVAILABILITY_KEYS)
-    calendar = _table(path, raw, "calendar", _CALENDAR_KEYS)
-
-    defaults = OperatorConfig()
-    resource_tz = _str(path, resource_raw, "timezone", defaults.resource.timezone)
-
     try:
+        _reject_unknown(path, "", raw, _TOP_LEVEL_KEYS)
+
+        instance = _table(path, raw, "instance", _INSTANCE_KEYS)
+        resource_raw = _table(path, raw, "resource", _RESOURCE_KEYS)
+        availability = _table(path, raw, "availability", _AVAILABILITY_KEYS)
+        calendar = _table(path, raw, "calendar", _CALENDAR_KEYS)
+
+        defaults = OperatorConfig()
+        resource_tz = _str(path, resource_raw, "timezone", defaults.resource.timezone)
+
         resource = Resource(
             slug=_str(path, resource_raw, "slug", defaults.resource.slug),
             timezone=resource_tz,
         )
         policy = _policy(path, availability, resource_tz, defaults.policy)
+
+        return OperatorConfig(
+            instance_name=_str(path, instance, "name", defaults.instance_name),
+            instance_timezone=_str(path, instance, "timezone", defaults.instance_timezone),
+            resource_name=_str(path, resource_raw, "name", defaults.resource_name),
+            resource=resource,
+            policy=policy,
+            blackouts=_blackouts(path, raw.get("blackout", []), resource_tz),
+            calendar=CalendarConfig(
+                event_title=_str(path, calendar, "event_title", defaults.calendar.event_title),
+                location=_str(path, calendar, "location", defaults.calendar.location),
+                organizer_name=_str(path, calendar, "organizer_name", ""),
+                organizer_email=_str(path, calendar, "organizer_email", ""),
+            ),
+            sources=_sources(path, raw),
+        )
+    except ConfigError:
+        raise
     except ValueError as exc:
         raise ConfigError(f"{path}: {exc}") from exc
-
-    return OperatorConfig(
-        instance_name=_str(path, instance, "name", defaults.instance_name),
-        instance_timezone=_str(path, instance, "timezone", defaults.instance_timezone),
-        resource_name=_str(path, resource_raw, "name", defaults.resource_name),
-        resource=resource,
-        policy=policy,
-        blackouts=_blackouts(path, raw.get("blackout", []), resource_tz),
-        calendar=CalendarConfig(
-            event_title=_str(path, calendar, "event_title", defaults.calendar.event_title),
-            location=_str(path, calendar, "location", defaults.calendar.location),
-            organizer_name=_str(path, calendar, "organizer_name", ""),
-            organizer_email=_str(path, calendar, "organizer_email", ""),
-        ),
-    )
 
 
 # --------------------------------------------------------------------------------------
