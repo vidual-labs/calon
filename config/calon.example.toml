@@ -125,23 +125,26 @@ organizer_email = ""
 #
 # calon is standalone first: it is fully usable with this whole section absent.
 # Enabling a source lets an external system POST booking requests to
-# /api/v1/intake/<slug>. A source adapter translates that system's payload into
+# /api/v1/<slug>. A source adapter translates that system's payload into
 # calon's canonical booking intent — and that is all it does. Adapters never
 # make scheduling decisions; every request, native or external, is judged by
 # the same rules above.
 #
 # `secret` is a shared secret used to verify the HMAC-SHA256 signature of each
-# incoming request. Generate one with: openssl rand -hex 32
+# incoming request. Generate one with: openssl rand -hex 32. Each request must
+# carry two headers: X-Calon-Timestamp (integer Unix seconds) and
+# X-Calon-Signature (sha256=hex of HMAC-SHA256 over "<timestamp>.<raw body>")).
 #
 # `resource_slug` names the [resource] the source books against. One resource
 # per deployment is the MVP shape; this key exists so the data model can grow
 # a second resource without rewriting every adapter. (Not multi-tenancy.)
 #
-# `timestamp_window_seconds` is how far in the past a request's X-Intake-*timestamp*
-# may be before the signature check rejects it with TIMESTAMP_OUT_OF_WINDOW.
-# This is the freshness bound on the timestamp; the anti-reuse property (a
-# request cannot be replayed later) is carried by the X-Intake-Idempotency-Key
-# header — the signature alone only binds the timestamp, not the delivery.
+# `timestamp_window_seconds` is how far in the past (or future) a request's
+# X-Calon-Timestamp may be before the verifier rejects it with 401. It is the
+# freshness bound on the timestamp; the anti-replay property (a request
+# cannot be retried to change an existing outcome) is carried by the
+# Idempotency-Key header — a replay returns the stored decision, not a
+# re-evaluation (ADR 0012).
 #
 # OpenFlow below is an EXAMPLE of an external source, not a dependency and not
 # a special case. Provider-specific adapters ship after 0.1.0.

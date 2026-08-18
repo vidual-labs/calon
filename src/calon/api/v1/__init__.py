@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from calon.api.v1 import availability, bookings
+from calon.api.v1 import availability, bookings, intake
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(bookings.router)
 router.include_router(availability.router)
+router.include_router(intake.router)
 
 __all__ = ["router"]

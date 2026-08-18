@@ -75,6 +75,28 @@ half-applied. Existing bookings are never touched by a rule change: a booking ac
 yesterday's rules stays accepted. See
 [ADR 0008](adr/0008-operator-config-is-toml-authoritative.md).
 
+### External sources
+
+`config/calon.toml` is also where external lead sources are enabled. Each enabled source is a
+`[sources.<slug>]` block:
+
+```toml
+[sources.openflow]
+enabled = true
+secret = "generate-with-openssl-rand-hex-32"
+resource_slug = "default"
+# timestamp_window_seconds = 300
+```
+
+A source with no `[sources.<slug>]` block does not exist for calon and its endpoint returns
+`404`. Sources are **disabled by default**, and CI runs the full suite with none configured,
+so calon stays fully standalone. The endpoint is `POST /api/v1/<slug>`, authenticated by
+HMAC-SHA256 with the per-source `secret` (see `docs/external-intake.md` and
+[ADR 0012](adr/0012-external-intake-final.md)). The only files here are the adapter implementation
+and the config block — nothing in the scheduling core changes when a new source is added, and
+no provider-specific adapter ships in `0.1.0` (the framework is proven with a synthetic test
+source; the first real adapter lands in `0.2.0`).
+
 ## `CALON_INSTANCE_HOST` — set it once, then leave it
 
 This value forms the domain part of every calendar event's `UID`

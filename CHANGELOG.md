@@ -69,6 +69,19 @@ per user-visible change, describing the effect rather than the implementation.
   user, `/healthz` healthcheck) and `docker-compose.yml` (single service, persistent
   `data` volume for the SQLite file, `config/` mounted read-only). Ship with
   `docker compose up -d --build`.
+- **External intake (phase 5).** External systems (e.g. OpenFlow) can now submit booking
+  requests to `POST /api/v1/<slug>` over a signed webhook. A per-source adapter translates
+  the provider's payload into calon's canonical booking intent and hands it to the same
+  `submit_intent` path the native form uses — the scheduling core has no knowledge of the
+  provider, which is what keeps it standalone. Requests are authenticated with
+  HMAC-SHA256 (per-source shared secret and a timestamp window; bad signatures return
+  `401`), and a retried request returns the decision first produced rather than
+  re-evaluating — a rejection cannot silently become an acceptance because the calendar
+  has moved since. Sources are disabled by default and enabled one
+  `[sources.<slug>]` config block at a time; unknown slugs return `404`. No
+  provider-specific adapter ships in `0.1.0` — the framework is proven with a synthetic
+  test source, and [ADR 0012](docs/adr/0012-external-intake-final.md) records the
+  concrete decisions (endpoint path, auth scheme, replay semantics, boot-time registry).
 - An ASCII logo at the top of `README.md`.
 
 ### Changed

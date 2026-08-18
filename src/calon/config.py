@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from calon.domain import AvailabilityPolicy, BlackoutPeriod, Resource
@@ -151,9 +151,7 @@ class SourceConfig:
     enabled: bool = True
 
 
-def _sources(
-    path: Path, raw: dict[str, Any]
-) -> dict[str, SourceConfig]:
+def _sources(path: Path, raw: dict[str, Any]) -> dict[str, SourceConfig]:
     """Parse the ``[sources.<slug>]`` block into validated per-source configs.
 
     The top-level ``[sources]`` table is the only one with a free-form subkey per source,
@@ -171,9 +169,7 @@ def _sources(
         if not isinstance(entry, dict):
             raise ConfigError(f"{path}: [sources.{slug}] must be a table")
 
-        allowed = frozenset(
-            {"secret", "resource_slug", "timestamp_window_seconds", "enabled"}
-        )
+        allowed = frozenset({"secret", "resource_slug", "timestamp_window_seconds", "enabled"})
         _reject_unknown(path, f"sources.{slug}", entry, allowed)
 
         label = f"[sources.{slug}] "
@@ -181,8 +177,8 @@ def _sources(
         if not isinstance(secret, str) or not secret:
             raise ConfigError(
                 f"{path}: {label}secret is required and must be a non-empty string; "
-                f"generate one with: uv run python -c \"import secrets; "
-                f"print(secrets.token_hex(32))\""
+                f'generate one with: uv run python -c "import secrets; '
+                f'print(secrets.token_hex(32))"'
             )
         if "resource_slug" in entry and not isinstance(entry["resource_slug"], str):
             raise ConfigError(f"{path}: {label}resource_slug must be a string")
@@ -257,7 +253,7 @@ _CALENDAR_KEYS = frozenset({"event_title", "location", "organizer_name", "organi
 # ``[sources]`` is read by the external intake framework; see :func:`_sources` for the
 # per-source invariants. The section is parsed at startup (never mid-request) and an
 # operator can configure a source here before its adapter module is added, because
-# ``SourceRegistry.from_package`` only wires the sources the adapter package implements
+# ``SourceRegistry.from_config`` only wires the sources the adapter package implements
 # and leaves the rest disabled.
 _TOP_LEVEL_KEYS = frozenset(
     {"instance", "resource", "availability", "blackout", "calendar", "sources"}

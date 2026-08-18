@@ -1,10 +1,11 @@
 # Domain model
 
-> Status: built as of phase 2. The decision types, the rule chain, the Pydantic schemas and
-> every table below exist. The only fields not yet written by anything are `ics_uid` and
-> `ics_sequence` (phase 3) and `idempotency_key` (phase 5); both ship in the first
-> migration on purpose. This document is the reference the implementation is built against,
-> and must be kept current as schemas change (see `CLAUDE.md` §7).
+> Status: built as of phase 2 (native flow) and phase 5 (external intake, ADR 0005 / ADR
+> 0012). The decision types, the rule chain, the Pydantic schemas and every table below
+> exist. The fields `ics_uid`, `ics_sequence` (phase 3) and `idempotency_key`,
+> `decision_json` (phase 5) are all now written: the first two on acceptance, the latter two
+> on an external-intake submission. This document is the reference the implementation is built
+> against, and must be kept current as schemas change (see `CLAUDE.md` §7).
 
 Two conventions apply everywhere:
 
@@ -207,7 +208,7 @@ requests, which are exactly the ones you want to look at later.
 `requested_start_utc` · `requested_end_utc` · `requester_timezone` · `requester_name` ·
 `requester_email` · `requester_phone` · `subject` · `notes` · `metadata_json` ·
 `raw_payload_json` · `received_at_utc` · `status` · `decision_code` · `decision_reason` ·
-`decided_at_utc`
+`decision_json` · `decided_at_utc`
 
 `status` is `pending`, `accepted`, or `rejected`. Unique index on
 `(source, idempotency_key)` where the key is not null.
@@ -215,6 +216,14 @@ requests, which are exactly the ones you want to look at later.
 That index ships with the first migration even though nothing uses it until the external
 intake framework lands — adding a unique constraint later, against live data that may
 already violate it, is a far worse migration than adding it up front.
+
+`decision_json` (added by migration 0002) stores the complete structured decision —
+`code`, `reason`, and `suggestions` — at the instant it is produced, for external-intake
+submissions. On an idempotent replay the route returns **this** value (re-validated into the
+public `DecisionOut` shape) rather than re-evaluating the rules, so a retry cannot change a
+stored outcome. Native submissions always write `NULL` here, because the native form has no
+replay semantics; their decision stays in the human-readable `decision_code` /
+`decision_reason` columns. See [ADR 0012](adr/0012-external-intake-final.md).
 
 ### `booking`
 

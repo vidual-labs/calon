@@ -172,6 +172,9 @@ class BookingIntent(Base):
     #: Opaque passthrough from the source. Never read by core logic.
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     raw_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: The original :class:`Decision`, serialized. Read only to replay a response on
+    #: idempotent retry (ADR 0005) — the stored answer is what the source first got.
+    decision_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     received_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")

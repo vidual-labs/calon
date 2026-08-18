@@ -22,6 +22,7 @@ from calon.api.v1 import router as v1_router
 from calon.clock import utcnow
 from calon.config import OperatorConfig, Settings, load_operator_config
 from calon.db import Database
+from calon.intake.external import SourceRegistry
 from calon.migrate import upgrade_to_head
 from calon.security import LoginStore
 from calon.services.provisioning import sync_operator_config
@@ -75,6 +76,23 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
         app.state.db = database
         app.state.settings = resolved_settings
         app.state.config = resolved_config
+
+        # External-intake sources are a startup-time decision (ADR 0005, rule 4):
+        # the set of enabled sources is read once from ``[sources.<slug>]`` and no
+        # per-request probing of that set is possible. A source that is not enabled
+        # here receives 404, not 401 — that is what keeps an unauthenticated caller
+        # from enumerating which slugs an instance has configured.
+        import importlib
+
+        registry = SourceRegistry.from_config(
+            importlib.import_module("calon.intake.external"),
+            source_configs=resolved_config.sources,
+        )
+        app.state.source_registry = registry
+        logger.info(
+            "calon sources: %d registered",
+            len(registry),
+        )
 
         # The operator's login store. Built only when a login is configured; when it is
         # not, ``login_store`` is ``None`` and every login-gated route refuses with 503
