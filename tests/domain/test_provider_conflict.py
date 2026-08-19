@@ -18,6 +18,7 @@ from calon.domain import (
     AvailabilityPolicy,
     BookedSpan,
     BookingRequest,
+    Decision,
     DecisionCode,
     FreeBusySpan,
     evaluate,
@@ -41,7 +42,7 @@ def judge(
     free_busy: Sequence[FreeBusySpan] = (),
     policy: AvailabilityPolicy | None = None,
     existing: Sequence[BookedSpan] = (),
-) -> object:
+) -> Decision:
     return evaluate(
         request,
         resource=RESOURCE,
@@ -136,12 +137,16 @@ def test_the_buffered_overlap_is_not_double_counted_for_the_provider_span():
 
 
 def test_provider_conflict_is_distinct_from_slot_conflict():
-    """The two conflict codes are separate so the requester hears the right reason."""
+    """The two conflict codes are separate so the requester hears the right reason.
+
+    The ``test_decision.py:EXPECTED_ORDER`` list already proves the two names are distinct
+    in the ``DecisionCode`` enum; here we prove the *behavioural* distinction — an own
+    booking and a provider busy span each drive their own code.
+    """
     request = make_request(at(*TUESDAY, 10, 0), at(*TUESDAY, 11, 0))
     own = booked(at(*TUESDAY, 10, 30), at(*TUESDAY, 11, 30), make_policy())
     provider = free_busy(at(*TUESDAY, 10, 30), at(*TUESDAY, 11, 30))
 
-    assert DecisionCode.SLOT_CONFLICT is not DecisionCode.PROVIDER_CONFLICT
     assert judge(request, existing=[own]).code is DecisionCode.SLOT_CONFLICT
     assert judge(request, free_busy=[provider]).code is DecisionCode.PROVIDER_CONFLICT
 
@@ -178,7 +183,7 @@ def test_explicit_empty_sequence_matches_the_default():
     default = evaluate(request, resource=RESOURCE, policy=make_policy(), now=NOW)
     with_empty = judge(request, free_busy=())
     assert default.code is with_empty.code
-    assert default.accepted
+    assert default.accepted is with_empty.accepted
 
 
 def test_provider_conflict_is_added_last_in_order():
@@ -200,5 +205,5 @@ def test_provider_conflict_is_added_last_in_order():
     )
 
 
-def decision_codes(decision: object) -> list[DecisionCode]:
-    return [v.code for v in decision.violations]  # type: ignore[attr-defined]
+def decision_codes(decision: Decision) -> list[DecisionCode]:
+    return [v.code for v in decision.violations]

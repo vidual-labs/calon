@@ -8,7 +8,7 @@ pre-phase-9 behaviour (CLAUDE.md §2).
 """
 
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from calon.domain import (
@@ -54,7 +54,7 @@ def search(
     )
 
 
-def local_starts(suggestions: Sequence[SlotSuggestion], timezone: str = BERLIN) -> list:
+def local_starts(suggestions: Sequence[SlotSuggestion], timezone: str = BERLIN) -> list[datetime]:
     return [s.start.astimezone(ZoneInfo(timezone)) for s in suggestions]
 
 
