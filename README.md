@@ -19,9 +19,9 @@ handoff that works with any major calendar.
 > Google / Outlook deeplinks + a login-gated `.ics` endpoint), includes a login-gated
 > operator panel, ships as a Docker container, and accepts signed booking requests from
 > external sources (`POST /api/v1/<slug>`). External-intake adapters ship behind a
-> source-adapter boundary; no provider-specific adapter ships in `0.1.0` — the first real
-> one lands in `0.2.0`. Do not use this in production before hardening (TLS, `CALON_LOGIN`).
-> See the [roadmap](#roadmap).
+> source-adapter boundary; `0.1.0` shipped the boundary with a synthetic test source, and
+> `0.2.0` lands the first real provider adapter, **OpenFlow**. Do not use this in production
+> before hardening (TLS, `CALON_LOGIN`). See the [roadmap](#roadmap).
 
 ---
 
@@ -225,8 +225,11 @@ an acceptance because the calendar has since moved. Unknown or disabled slugs re
 with a constant body; bad signatures return `401`.
 
 Sources are disabled by default and added one `[sources.<slug>]` config block at a time.
-No provider-specific adapter ships in `0.1.0` (the framework is proven with a synthetic test
-source; the first real adapter lands in `0.2.0`).
+`0.1.0` proved the boundary with a synthetic test source; `0.2.0` ships the first real
+provider adapter, **OpenFlow** — a per-form webhook that signs its body with a single
+`X-OpenFlow-Signature` header and maps its arbitrary form field ids to canonical booking
+fields via a `[sources.openflow.fields.<formId>]` block. More adapters are added behind the
+same boundary; the core never learns their shapes.
 
 See [`docs/external-intake.md`](docs/external-intake.md) and
 [ADR 0012](docs/adr/0012-external-intake-final.md).
@@ -243,7 +246,7 @@ See [`docs/external-intake.md`](docs/external-intake.md) and
 | 5 | External intake framework: adapters, HMAC, idempotency | — | done |
 | 6 | Docker packaging and self-hosting docs | — | done |
 | 7 | **First release** | `0.1.0` | done |
-| 8 | First real provider adapter, once a genuine payload exists | `0.2.0` | |
+| 8 | First real provider adapter, once a genuine payload exists | `0.2.0` | done |
 | 9 | Optional resource calendar sync: Google Calendar & Microsoft 365 free/busy check plus write-back of accepted bookings, behind a `CalendarProvider` interface, opt-in per resource | `0.3.0` | |
 
 Post-`0.3.0` candidates: requester-facing cancel and reschedule links.

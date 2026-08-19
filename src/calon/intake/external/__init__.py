@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from types import ModuleType
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 if TYPE_CHECKING:
     from calon.config import SourceConfig as OperatorSourceConfig
@@ -217,7 +217,15 @@ class SourceRegistry:
                         f"submodule of that name; add the adapter or set "
                         f"[sources.{slug}] enabled = false"
                     ) from exc
-            adapters[slug] = _adapter_for(module, slug)
+            if slug == "openflow":
+                # OpenFlow needs its per-form field-mapping table from the operator
+                # config; the module carries only the *class*, and the registry builds
+                # the concrete adapter here so the config (secret + field map) is the
+                # single source of truth. A boot that cannot build it fails loudly now,
+                # not per-request.
+                adapters[slug] = _openflow_adapter_for(module, cfg)
+            else:
+                adapters[slug] = _adapter_for(module, slug)
         return cls(adapters)
 
     def get(self, slug: str) -> HmacSourceAdapter | SourceAdapter | None:
@@ -246,9 +254,49 @@ def _adapter_for(module: ModuleType, slug: str) -> HmacSourceAdapter | SourceAda
             f"module {module.__name__!r} exposes no adapter for slug {slug!r}; "
             f"it must define one under the slug name or as 'adapter'"
         )
+    if adapter is None:
+        raise RuntimeError(  # pragma: no cover - unreachable once the config exists
+            f"source {slug!r} is enabled without an adapter object; "
+            f"register it under the module's slug name before enabling it"
+        )
     if not isinstance(adapter, SourceAdapter) or getattr(adapter, "slug", None) != slug:
         raise RuntimeError(
             f"adapter in module {module.__name__!r} for slug {slug!r} does not "
             f"satisfy SourceAdapter or claims a different slug"
         )
     return adapter
+
+
+def _openflow_adapter_for(module: ModuleType, cfg: OperatorSourceConfig) -> SourceAdapter:
+    """Build the OpenFlow adapter from the operator config (ADR 0005, rule 3).
+
+    Unlike :func:`_adapter_for`, which reads a pre-built object out of the module, this
+    *constructs* one because OpenFlow needs the operator's per-form field map. The module
+    ``calon.intake.external.openflow`` carries the class and helpers only; the concrete
+    adapter is built here from ``cfg`` (secret + ``fields``). A missing ``fields`` table
+    for an enabled OpenFlow source is a boot error: the signature scheme alone cannot
+    translate OpenFlow form fields into a booking intent.
+    """
+    if getattr(module, "OpenFlowAdapter", None) is None:
+        raise RuntimeError(
+            f"module {module.__name__!r} does not expose OpenFlowAdapter; "
+            "update or remove the [sources.openflow] block"
+        )
+    if not cfg.fields:
+        raise RuntimeError(
+            "[sources.openflow] is enabled but has no [sources.openflow.fields.<formId>] "
+            "mapping; add at least one per-form table or set enabled = false"
+        )
+    field_mappings = module.parse_openflow_fields("[sources.openflow.fields]", cfg.fields)
+    adapter = module.OpenFlowAdapter(
+        secret=cfg.secret,
+        field_mappings=field_mappings,
+        resource_slug=cfg.resource_slug,
+        timestamp_window_seconds=cfg.timestamp_window_seconds,
+    )
+    if getattr(adapter, "slug", None) != "openflow":
+        raise RuntimeError(
+            f"OpenFlowAdapter in {module.__name__!r} claims slug "
+            f"{getattr(adapter, 'slug', None)!r}, expected 'openflow'"
+        )
+    return cast("SourceAdapter", adapter)

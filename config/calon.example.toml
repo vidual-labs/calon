@@ -147,10 +147,37 @@ organizer_email = ""
 # re-evaluation (ADR 0012).
 #
 # OpenFlow below is an EXAMPLE of an external source, not a dependency and not
-# a special case. Provider-specific adapters ship after 0.1.0.
+# a special case. It is the first real provider adapter (0.2.0).
+#
+# OpenFlow signs its webhook differently from the canonical X-Calon-* scheme:
+# it sends ONE header, X-OpenFlow-Signature, the HMAC-SHA256 hex digest of the
+# raw JSON body (no timestamp header). The adapter authenticates on that
+# signature AND anchors an anti-replay window to the payload's own `timestamp`
+# field (a wall clock, not signed over) measured against the instance clock. A
+# request that also carries the canonical X-Calon-* headers is verified by the
+# standard scheme instead (canonical takes precedence).
+#
+# Unlike a source that signs the canonical body as-is, an OpenFlow webhook is a
+# form submission whose field ids are arbitrary per form. So it needs a per-form
+# field-mapping table under `fields.<formId>`: one table per OpenFlow form,
+# mapping each of calon's canonical keys (start, end, name, email, phone,
+# subject, timezone) to the field id that holds it inside that form's `data`
+# object. At least one form must be mapped before the source is enabled (the
+# boot refuses to start an enabled openflow source with no field map).
 # ---------------------------------------------------------------------------
 # [sources.openflow]
 # enabled = true
 # secret = "replace-me-with-a-long-random-value"
 # resource_slug = "default"
 # timestamp_window_seconds = 300
+#
+# # Per-form mapping: one table per OpenFlow formId. `start` is required; the
+# # rest are optional. `timezone` is the IANA zone the form's start/end answers are in.
+# [sources.openflow.fields."your-openflow-form-id"]
+# start = "fld_start_id"
+# end = "fld_end_id"
+# name = "fld_name_id"
+# email = "fld_email_id"
+# phone = "fld_phone_id"
+# subject = "fld_subject_id"
+# timezone = "Europe/Berlin"

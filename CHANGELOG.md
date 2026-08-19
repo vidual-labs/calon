@@ -12,11 +12,25 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
-- _Nothing yet._
+- OpenFlow is now a supported external intake source. A form submission from OpenFlow
+  signs its body with a single `X-OpenFlow-Signature` header (HMAC-SHA256), and calon
+  authenticates it against the shared secret and an anti-replay window anchored on the
+  payload's own timestamp. To map one of your OpenFlow forms to a booking, add a
+  `[sources.openflow.fields.<formId>]` block: one table per form, naming the OpenFlow
+  field id that holds each of start, end, name, email, phone, subject, and the form's
+  timezone. Until at least one form is mapped, the source cannot be enabled: the boot
+  refuses to start an enabled OpenFlow source with no field map, loudly and at startup.
+- `calon.example.toml` now documents the OpenFlow source in full: the single
+  signature scheme, the per-form field-mapping table, and the precedence rule (a request
+  that also carries the canonical `X-Calon-*` headers is verified by that scheme
+  instead).
 
 ### Changed
 
-- _Nothing yet._
+- The operator's per-source config now carries an optional `fields` table (the per-form
+  field mapping). This is the single place an external source's field ids are configured;
+  a config that references a `fields` table for a source that does not use one is still
+  accepted and simply ignored.
 
 ### Fixed
 

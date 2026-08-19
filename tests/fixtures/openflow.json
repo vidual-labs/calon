@@ -1,0 +1,63 @@
+{
+  "_comment": "Genuine OpenFlow webhook payloads (backend/src/models/integrations.js: runWebhook). Field ids under data are invented; every OTHER field is exactly what OpenFlow sends. See docs/external-intake.md.",
+  "variants": {
+    "accept": {
+      "event": "submission",
+      "formId": "of_form_001",
+      "formTitle": "Consultation booking",
+      "data": {
+        "fld_name": "Ada Lovelace",
+        "fld_email": "ada@example.com",
+        "fld_phone": "+49 151 2345678",
+        "fld_start": "2026-09-01T10:00:00+02:00",
+        "fld_end": "2026-09-01T10:30:00+02:00",
+        "fld_language": "de"
+      },
+      "timestamp": "2026-09-01T05:58:00.000Z"
+    },
+    "reject-early": {
+      "event": "submission",
+      "formId": "of_form_001",
+      "formTitle": "Consultation booking",
+      "data": {
+        "fld_name": "Grace Hopper",
+        "fld_email": "grace@example.com",
+        "fld_start": "2026-09-01T07:00:00+02:00"
+      },
+      "timestamp": "2026-09-01T05:58:00.000Z"
+    },
+    "no-mapping": {
+      "event": "submission",
+      "formId": "of_form_999",
+      "formTitle": "Newsletter signup",
+      "data": {
+        "fld_news_name": "Newsletter Reader",
+        "fld_news_email": "reader@example.com"
+      },
+      "timestamp": "2026-09-01T05:58:00.000Z"
+    },
+    "replay": {
+      "event": "submission",
+      "formId": "of_form_002",
+      "formTitle": "Consultation booking",
+      "data": {
+        "fld_name": "Ada Lovelace",
+        "fld_email": "ada@example.com",
+        "fld_start": "2026-09-01T10:00:00+02:00",
+        "fld_end": "2026-09-01T10:30:00+02:00"
+      },
+      "timestamp": "2026-09-01T05:58:00.000Z"
+    }
+  },
+  "mapping": {
+    "of_form_001": {
+      "start": "fld_start",
+      "end": "fld_end",
+      "name": "fld_name",
+      "email": "fld_email",
+      "phone": "fld_phone"
+    }
+  },
+  "timezone": "Europe/Berlin",
+  "secret": "openflow-test-secret"
+}
