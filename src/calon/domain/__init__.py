@@ -18,6 +18,7 @@ from calon.domain.availability import (
     AvailabilityPolicy,
     BlackoutPeriod,
     BookedSpan,
+    FreeBusySpan,
     Resource,
     is_valid_timezone,
     to_utc,
@@ -40,6 +41,7 @@ __all__ = [
     "BookingRequest",
     "Decision",
     "DecisionCode",
+    "FreeBusySpan",
     "Outcome",
     "Resource",
     "SlotSuggestion",
@@ -61,12 +63,19 @@ def decide(
     now: datetime,
     blackouts: Sequence[BlackoutPeriod] = (),
     existing: Sequence[BookedSpan] = (),
+    free_busy: Sequence[FreeBusySpan] = (),
     limit: int = MAX_SUGGESTIONS,
 ) -> Decision:
     """Evaluate a request and, on a rejection worth answering, propose alternatives.
 
     Suggestions are skipped when the request was structurally unusable — there is no "next
     available" for a question that could not be asked.
+
+    ``free_busy`` (ADR 0009) is provider-reported busy time; it is threaded through to
+    both the decision and the slot search so a rejected request is only proposed
+    alternatives that are not already taken in the resource's external calendar, and the
+    suggestions themselves are honest. An empty ``free_busy`` leaves behaviour identical
+    to the pre-phase-9 path (CLAUDE.md §2).
     """
     decision = evaluate(
         request,
@@ -75,6 +84,7 @@ def decide(
         now=now,
         blackouts=blackouts,
         existing=existing,
+        free_busy=free_busy,
     )
     if not decision.is_searchable:
         return decision
@@ -86,6 +96,7 @@ def decide(
             now=now,
             blackouts=blackouts,
             existing=existing,
+            free_busy=free_busy,
             limit=limit,
         )
     )

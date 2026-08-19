@@ -24,6 +24,7 @@ from calon.domain.availability import (
     AvailabilityPolicy,
     BlackoutPeriod,
     BookedSpan,
+    FreeBusySpan,
     Resource,
     is_valid_timezone,
     to_utc,
@@ -45,6 +46,7 @@ def suggest_slots(
     now: datetime,
     blackouts: Sequence[BlackoutPeriod] = (),
     existing: Sequence[BookedSpan] = (),
+    free_busy: Sequence[FreeBusySpan] = (),
     limit: int = MAX_SUGGESTIONS,
     until: datetime | None = None,
 ) -> tuple[SlotSuggestion, ...]:
@@ -54,6 +56,11 @@ def suggest_slots(
     which is how the availability query asks for a specific window. It can only narrow the
     horizon, never extend it past what the policy allows. A slot must *finish* by
     ``until``, so a range query cannot return a slot that runs past the window asked about.
+
+    ``free_busy`` (ADR 0009) is provider-reported busy time, threaded into every
+    candidate's rule-chain evaluation so a suggested slot is never one the resource
+    already has in its external calendar. An empty ``free_busy`` leaves behaviour
+    identical to the pre-phase-9 path (CLAUDE.md §2).
 
     Returns an empty tuple when the request itself is unusable (no timezone, no duration)
     or when nothing is free before the horizon. Suggestions are expressed in the
@@ -90,6 +97,7 @@ def suggest_slots(
             now=now_utc,
             blackouts=blackouts,
             existing=existing,
+            free_busy=free_busy,
         )
         if decision.accepted:
             found.append(

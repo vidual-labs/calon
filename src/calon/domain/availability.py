@@ -215,3 +215,35 @@ class BookedSpan:
 
     def conflicts_with(self, block_start: datetime, block_end: datetime) -> bool:
         return overlaps(block_start, block_end, self.block_start_utc, self.block_end_utc)
+
+
+@dataclass(frozen=True, slots=True)
+class FreeBusySpan:
+    """Busy time reported by a connected calendar provider for one resource (ADR 0009).
+
+    The pure counterpart of what a provider's free/busy endpoint returns. The rule
+    chain treats busy time **exactly like an own-booking span** for conflict purposes —
+    the only difference is the code it rejects with: ``PROVIDER_CONFLICT`` rather than
+    ``SLOT_CONFLICT``, so a requester learns the clash is with the resource's existing
+    external calendar, not with another booking calon made (ADR 0009, Consequences).
+
+    The span is **not** buffered: buffers are a property of calon-authored bookings (the
+    operator's ``buffer_before_min``/``buffer_after_min``), and a provider event is not a
+    booking calon made. The busy interval overlaps a request by its raw bounds; it is the
+    rule that widens the *request* by its own buffers before comparing, mirroring how
+    ``BookedSpan`` conflicts are checked.
+    """
+
+    starts_at_utc: datetime
+    ends_at_utc: datetime
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not is_aware(self.starts_at_utc) or not is_aware(self.ends_at_utc):
+            raise ValueError("free/busy span bounds must be timezone-aware")
+        if self.ends_at_utc <= self.starts_at_utc:
+            raise ValueError("a free/busy span must end after it starts")
+
+    def covers(self, start: datetime, end: datetime) -> bool:
+        """Whether ``[start, end)`` overlaps this busy interval (half-open)."""
+        return overlaps(start, end, self.starts_at_utc, self.ends_at_utc)

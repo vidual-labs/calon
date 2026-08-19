@@ -21,6 +21,7 @@ from calon.domain.availability import (
     AvailabilityPolicy,
     BlackoutPeriod,
     BookedSpan,
+    FreeBusySpan,
     Resource,
     is_aware,
     is_valid_timezone,
@@ -54,11 +55,19 @@ def evaluate(
     now: datetime,
     blackouts: Sequence[BlackoutPeriod] = (),
     existing: Sequence[BookedSpan] = (),
+    free_busy: Sequence[FreeBusySpan] = (),
 ) -> Decision:
-    """Judge one request against the policy, the blackouts, and the existing bookings.
+    """Judge one request against the policy, the blackouts, existing bookings, and
+    provider-reported busy time.
 
     ``now`` must be timezone-aware; a naive one is a programming error in the caller, not
     a bad booking request, so it raises rather than becoming a rejection.
+
+    ``free_busy`` is optional busy time from a connected calendar provider (ADR 0009).
+    It is only relevant when at least one :class:`FreeBusySpan` is supplied; an
+    empty sequence leaves the rule chain byte-for-byte identical to the pre-phase-9
+    behaviour (CLAUDE.md §2 — a resource with no provider configured must behave
+    exactly as today).
 
     The returned decision carries no suggestions. Attach them with
     ``Decision.with_suggestions`` — see ``calon.domain.slots.suggest_slots``.
@@ -82,6 +91,7 @@ def evaluate(
             _check_blackouts(start_utc, end_utc, blackouts),
             _check_daily_limit(start_utc, policy, existing),
             _check_conflicts(start_utc, end_utc, policy, existing),
+            _check_provider_conflicts(start_utc, end_utc, policy, free_busy),
         )
         if violation is not None
     )
@@ -252,6 +262,30 @@ def _check_conflicts(
     for span in existing:
         if span.conflicts_with(block_start, block_end):
             return Violation(DecisionCode.SLOT_CONFLICT, "That slot overlaps an existing booking.")
+    return None
+
+
+def _check_provider_conflicts(
+    start_utc: datetime,
+    end_utc: datetime,
+    policy: AvailabilityPolicy,
+    free_busy: Sequence[FreeBusySpan],
+) -> Violation | None:
+    """Reject with ``PROVIDER_CONFLICT`` when the request overlaps provider-reported busy.
+
+    The request's span (buffered, mirroring the own-booking conflict check) is tested
+    against every :class:`FreeBusySpan` in ``free_busy``. An empty ``free_busy`` makes
+    this rule a no-op, which is what keeps a resource with no provider configured
+    byte-for-byte identical to its pre-phase-9 behaviour (ADR 0009 / CLAUDE.md §2).
+    """
+    block_start, block_end = policy.buffered_span(start_utc, end_utc)
+    for span in free_busy:
+        if span.covers(block_start, block_end):
+            detail = f": {span.reason}" if span.reason else ""
+            return Violation(
+                DecisionCode.PROVIDER_CONFLICT,
+                f"That time conflicts with the resource's already-scheduled time{detail}.",
+            )
     return None
 
 
