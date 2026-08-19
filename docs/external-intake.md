@@ -127,10 +127,25 @@ calon is concerned, and its endpoint returns `404`.
 OpenFlow is an example of an external source, not the centre of this architecture and not a
 special case in the code. It gets the same two-method adapter as anything else.
 
-No provider-specific adapter ships in `0.1.0`. Writing one against a guessed payload shape
-is how a "generic" boundary quietly becomes shaped around a single vendor. The framework is
-proven in `0.1.0` using a synthetic test source; the first real adapter lands in `0.2.0`,
-once there is a genuine payload sample to build against.
+### The OpenFlow adapter (`0.2.0`)
+
+`0.1.0` proved the boundary with a synthetic test source and shipped **no** provider
+adapter, on purpose: writing one against a *guessed* payload shape is how a "generic"
+boundary quietly becomes shaped around a single vendor. Once a genuine OpenFlow payload
+sample existed, the first real adapter landed in `0.2.0` - built against that real shape,
+with its own tests, and added behind the very boundary this document describes. It is the
+proof the boundary is real.
+
+Concretely, an OpenFlow webhook sends a JSON submission (`event`, `formId`, `formTitle`,
+a `timestamp` wall clock, and a `data` object keyed by arbitrary per-form field ids)
+with one header, `X-OpenFlow-Signature` = `hex(HMAC-SHA256(secret, rawBody))`. The
+adapter authenticates on that signature and windows the payload's own `timestamp`; it
+then maps the form's field ids to the canonical booking fields through the operator's
+`[sources.openflow.fields.<formId>]` table and re-submits as an ordinary BookingIntent,
+so the scheduling core sees it exactly like a native request. A request that also
+carries the canonical `X-Calon-*` headers is verified by that scheme instead (canonical
+takes precedence), so an OpenFlow caller can opt into the stronger, headered scheme at
+any time. The adapter translates only: it never accepts, rejects, or books.
 
 ## The other direction: reading availability
 

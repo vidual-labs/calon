@@ -149,6 +149,7 @@ class SourceConfig:
     resource_slug: str = "default"
     timestamp_window_seconds: int = 300
     enabled: bool = True
+    fields: dict[str, dict[str, str]] | None = None
 
 
 def _sources(path: Path, raw: dict[str, Any]) -> dict[str, SourceConfig]:
@@ -169,7 +170,9 @@ def _sources(path: Path, raw: dict[str, Any]) -> dict[str, SourceConfig]:
         if not isinstance(entry, dict):
             raise ConfigError(f"{path}: [sources.{slug}] must be a table")
 
-        allowed = frozenset({"secret", "resource_slug", "timestamp_window_seconds", "enabled"})
+        allowed = frozenset(
+            {"secret", "resource_slug", "timestamp_window_seconds", "enabled", "fields"}
+        )
         _reject_unknown(path, f"sources.{slug}", entry, allowed)
 
         label = f"[sources.{slug}] "
@@ -192,12 +195,23 @@ def _sources(path: Path, raw: dict[str, Any]) -> dict[str, SourceConfig]:
             raise ConfigError(f"{path}: {label}enabled must be true or false")
         enabled = entry.get("enabled", True)
 
+        fields_raw = entry.get("fields")
+        if fields_raw is not None:
+            if not isinstance(fields_raw, dict):
+                raise ConfigError(f"{path}: {label}fields must be a table of per-field tables")
+            for form_id, field_entry in fields_raw.items():
+                if not isinstance(field_entry, dict):
+                    raise ConfigError(f"{path}: {label}fields.{form_id} must be a table")
+                for key, val in field_entry.items():
+                    if not isinstance(val, str):
+                        raise ConfigError(f"{path}: {label}fields.{form_id}.{key} must be a string")
         sources[slug] = SourceConfig(
             slug=slug,
             secret=secret,
             resource_slug=entry.get("resource_slug", "default"),
             timestamp_window_seconds=window,
             enabled=enabled,
+            fields=fields_raw if fields_raw is not None else None,
         )
     return sources
 
