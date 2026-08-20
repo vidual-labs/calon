@@ -39,7 +39,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy.orm import Session
@@ -219,20 +218,19 @@ def _render(
     booking = None
 
     if submission.booking is not None:
-        zone = ZoneInfo(timezone)
-
-        booking = BookingOut(
-            id=submission.booking.id,
-            start=_local(submission.booking.start_utc, zone),
-            end=_local(submission.booking.end_utc, zone),
-            timezone=timezone,
-            status=submission.booking.status,
-        )
-
+        calendar = None
         if handoff_context is not None:
-            booking.calendar = _build_handoff(
+            calendar = _build_handoff(
                 handoff_context.booking, handoff_context.intent, settings=settings, now=now
             )
+        booking = BookingOut.of(
+            id=submission.booking.id,
+            start_utc=submission.booking.start_utc,
+            end_utc=submission.booking.end_utc,
+            status=submission.booking.status,
+            timezone=timezone,
+            calendar=calendar,
+        )
 
     return BookingResponse(
         intent_id=submission.intent_id,
@@ -301,9 +299,3 @@ def _build_handoff(
         sequence=booking.ics_sequence or 0,
         links=CalendarLinksOut(**links),
     )
-
-
-def _local(moment: datetime, zone: ZoneInfo) -> datetime:
-    """Times go back to the requester in the timezone they asked in, not in UTC."""
-
-    return moment.astimezone(zone)

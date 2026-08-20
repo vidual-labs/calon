@@ -49,6 +49,10 @@ per user-visible change, describing the effect rather than the implementation.
   does not register, instead of `SEQUENCE`. Calendar clients ignored the value,
   so a re-download of an amended booking was not guaranteed to update the
   existing calendar entry in place.
+- A booking accepted through external intake always reported its start and end
+  times in UTC, regardless of the timezone the request declared — unlike the
+  native booking API, which reports them in the requester's own timezone as
+  documented.
 
 ### Security
 

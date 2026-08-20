@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
@@ -176,6 +177,35 @@ class BookingOut(BaseModel):
     # provider deeplinks are built (phase 3); ``null`` in earlier builds so the field is
     # additive and never a breaking change once it exists.
     calendar: CalendarHandoff | None = None
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        id: str,
+        start_utc: datetime,
+        end_utc: datetime,
+        status: str,
+        timezone: str,
+        calendar: CalendarHandoff | None = None,
+    ) -> BookingOut:
+        """Build the wire shape from a booking's UTC instants and the requester's zone.
+
+        The one place ``start``/``end`` are converted out of UTC, so every caller —
+        the native route, the external-intake route's three response shapes (fresh,
+        stored replay, race-path replay) — reports a booking in the same timezone it
+        promises in the docstring above, instead of each hand-rolling the conversion
+        (or skipping it) separately.
+        """
+        zone = ZoneInfo(timezone)
+        return cls(
+            id=id,
+            start=start_utc.astimezone(zone),
+            end=end_utc.astimezone(zone),
+            timezone=timezone,
+            status=status,
+            calendar=calendar,
+        )
 
 
 class CalendarLinksOut(BaseModel):

@@ -128,7 +128,7 @@ async def intake(
     # _evaluate_with_write returns either a Submission (fresh) or a BookingResponse
     # (race-path replay). Distinguish by type.
     if isinstance(result, booking_service.Submission):
-        return _fresh_response(result)
+        return _fresh_response(result, intent.timezone)
     return result
 
 
@@ -230,12 +230,12 @@ def _assembled_replay_response(session: Session, stored: BookingIntent) -> Booki
     )
     booking: BookingOut | None = None
     if booking_row is not None:
-        booking = BookingOut(
+        booking = BookingOut.of(
             id=booking_row.id,
-            start=booking_row.start_utc,
-            end=booking_row.end_utc,
-            timezone="UTC",
+            start_utc=booking_row.start_utc,
+            end_utc=booking_row.end_utc,
             status=booking_row.status,
+            timezone=stored.requester_timezone,
         )
     return BookingResponse(
         intent_id=stored.id,
@@ -250,16 +250,16 @@ def _assembled_replay_response(session: Session, stored: BookingIntent) -> Booki
 # --------------------------------------------------------------------------------------
 
 
-def _fresh_response(submission: booking_service.Submission) -> JSONResponse:
+def _fresh_response(submission: booking_service.Submission, timezone: str) -> JSONResponse:
     """Assemble the response for a request the route just evaluated (HTTP 201 — new resource)."""
     booking: BookingOut | None = None
     if submission.booking is not None:
-        booking = BookingOut(
+        booking = BookingOut.of(
             id=submission.booking.id,
-            start=submission.booking.start_utc,
-            end=submission.booking.end_utc,
-            timezone="UTC",
+            start_utc=submission.booking.start_utc,
+            end_utc=submission.booking.end_utc,
             status="confirmed",
+            timezone=timezone,
         )
     body = BookingResponse(
         intent_id=submission.intent_id,
@@ -290,12 +290,12 @@ def _stored_outcome_response(intent_row: BookingIntent, database: Database) -> B
         )
         booking: BookingOut | None = None
         if booking_row is not None:
-            booking = BookingOut(
+            booking = BookingOut.of(
                 id=booking_row.id,
-                start=booking_row.start_utc,
-                end=booking_row.end_utc,
-                timezone="UTC",
+                start_utc=booking_row.start_utc,
+                end_utc=booking_row.end_utc,
                 status=booking_row.status,
+                timezone=intent_row.requester_timezone,
             )
         return BookingResponse(
             intent_id=intent_row.id,

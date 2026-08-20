@@ -141,6 +141,11 @@ def test_valid_signed_request_is_accepted(intake_client: TestClient) -> None:
     assert data["decision"]["code"] == "ACCEPTED"
     assert data["booking"] is not None
     assert data["booking"]["status"] == "confirmed"
+    # Regression: the booking used to always be reported in UTC regardless of what
+    # the request asked in, unlike the native route and BookingOut's own contract
+    # ("start and end are in the requester's timezone").
+    assert data["booking"]["timezone"] == TZ
+    assert data["booking"]["start"] == START
 
 
 def test_accepted_booking_is_written_to_the_database(
@@ -210,6 +215,8 @@ def test_idempotent_replay_returns_stored_decision(intake_client: TestClient) ->
     data = r2.json()
     assert data["intent_id"] == first_intent_id
     assert data["decision"] == first_decision
+    # The replay path must not fall back to UTC either.
+    assert data["booking"]["timezone"] == TZ
 
 
 def test_replayed_rejection_returns_the_stored_code(intake_client: TestClient) -> None:
