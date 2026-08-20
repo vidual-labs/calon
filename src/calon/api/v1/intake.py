@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -32,7 +33,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.datastructures import MutableHeaders
 
-from calon.api.deps import DatabaseDep, get_source_registry
+from calon.api.deps import CalendarRegistryDep, DatabaseDep, get_source_registry
+from calon.calendars import CalendarProviderRegistry
 from calon.clock import utcnow
 from calon.db import Database
 from calon.intake.external import IntakeRequest, SourceRegistry
@@ -40,6 +42,8 @@ from calon.intake.signature import IntakeAuthError, IntakeParseError, resolve_id
 from calon.models import Booking, BookingIntent
 from calon.schemas import BookingIntentIn, BookingOut, BookingResponse, DecisionOut
 from calon.services import booking_service, intake_read
+
+from . import _calendar_writeback
 
 __all__ = ["router"]
 
@@ -58,6 +62,7 @@ async def intake(
     response: Response,
     registry: RegistryDep,
     database: DatabaseDep,
+    calendar_registry: CalendarRegistryDep,
 ) -> Any:
     """One endpoint serves every registered source (``docs/external-intake.md``).
 
@@ -116,6 +121,7 @@ async def intake(
         idempotency_key=key,
         response_headers=response.headers,
         source_slug=source_slug,
+        calendar_registry=calendar_registry,
     )
     # _evaluate_with_write returns either a Submission (fresh) or a BookingResponse
     # (race-path replay). Distinguish by type.
@@ -139,6 +145,7 @@ def _evaluate_with_write(
     idempotency_key: str | None,
     response_headers: MutableHeaders,
     source_slug: str,
+    calendar_registry: CalendarProviderRegistry,
 ) -> booking_service.Submission | BookingResponse:
     """Run the evaluation path inside the write transaction.
 
@@ -146,13 +153,19 @@ def _evaluate_with_write(
     :class:`BookingResponse` (integrity-race replay). The caller checks the type
     and assembles the final response accordingly.
 
+    On acceptance, after the write transaction commits, the post-commit calendar
+    write-back runs (ADR 0009). A provider failure is audited as
+    ``booking.calendar_sync_failed`` and the response is unchanged — the write-back
+    never fails the acceptance (the booking is already committed).
+
     On an :class:`IntegrityError` (concurrent request with the same idempotency
     key committed first) the winner's row is re-read from the *same* session and
     the replay header is set before returning.
     """
+    submission: booking_service.Submission | None = None
     with database.write() as session:
         try:
-            return booking_service.submit_intent(
+            submission = booking_service.submit_intent(
                 session,
                 intent=intent,
                 source=source,
@@ -160,20 +173,47 @@ def _evaluate_with_write(
                 raw_payload=raw_payload,
                 idempotency_key=idempotency_key,
                 instance_host=source,
+                calendar_registry=calendar_registry,
             )
         except IntegrityError:
             stored = _find_stored_outcome(
                 session, source=source_slug, idempotency_key=idempotency_key or ""
             )
             if stored is None:
-                # The winner's row is committed but the current session's snapshot
-                # has not advanced yet; re-raise so the caller sees a 500 and can
+                # The winner's row has been committed, but the current session's snapshot
+                # has not advanced yet - re-raise so the caller sees a 500 and can
                 # retry. The next attempt's read transaction will find the row.
                 raise
             response_headers["Idempotent-Replay"] = "true"
             # Build the replay response directly so the caller's final response is
             # the same shape it would get from a normal replay hit.
             return _assembled_replay_response(session, stored)
+
+    # Post-commit calendar write-back (ADR 0009). Runs *after* the write session has
+    # closed so an unreachable provider never holds the DB lock. Skipped entirely when
+    # the submission has no accepted booking (rejected outcomes, race-path replays).
+    if submission is not None and submission.booking is not None:
+        with database.read() as session:
+            intent_row = (
+                session.get(BookingIntent, submission.intent_id)
+                if submission.intent_id is not None
+                else None
+            )
+        if intent_row is not None:
+            synced = _calendar_writeback.perform_write_back(
+                database,
+                calendar_registry,
+                booking=submission.booking,
+                intent=intent_row,
+                now=now,
+            )
+            if synced is not None:
+                submission = replace(
+                    submission,
+                    decision=submission.decision.with_calendar_synced(synced),
+                )
+
+    return submission
 
 
 def _assembled_replay_response(session: Session, stored: BookingIntent) -> BookingResponse:

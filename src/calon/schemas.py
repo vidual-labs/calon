@@ -127,6 +127,10 @@ class DecisionOut(BaseModel):
 
     ``code`` is the first rule that failed, so a caller can branch on one value;
     ``violations`` carries all of them, so a requester is told everything at once.
+
+    ``calendar_synced`` (ADR 0009): informational flag set ``True`` when the post-acceptance
+    provider write-back succeeded, ``False`` when it degraded (provider failure or no
+    provider configured). It never affects the booking's own status or the decision's code.
     """
 
     outcome: Outcome
@@ -135,6 +139,7 @@ class DecisionOut(BaseModel):
     evaluated_at: datetime
     violations: list[ViolationOut] = Field(default_factory=list)
     suggestions: list[SlotOut] = Field(default_factory=list)
+    calendar_synced: bool = False
 
     @classmethod
     def of(cls, decision: Decision) -> DecisionOut:
@@ -151,6 +156,7 @@ class DecisionOut(BaseModel):
                 SlotOut(start=slot.start, end=slot.end, timezone=slot.timezone)
                 for slot in decision.suggestions
             ],
+            calendar_synced=decision.calendar_synced,
         )
 
 

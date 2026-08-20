@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from calon.calendars import CalendarProviderRegistry
 from calon.domain import SlotSuggestion, is_valid_timezone, suggest_slots, to_utc
 from calon.domain.rules import BookingRequest
 from calon.services import repository
@@ -73,6 +74,7 @@ def find_availability(
     now: datetime,
     timezone: str | None = None,
     duration_min: int | None = None,
+    calendar_registry: CalendarProviderRegistry | None = None,
 ) -> Availability:
     """Every slot of ``duration_min`` that is bookable inside the window.
 
@@ -80,6 +82,11 @@ def find_availability(
     can render them without converting anything. Omit ``timezone`` to get them in the
     resource's own — which is what an operator-facing view wants, and what the booking form
     falls back to when the requester has not said where they are.
+
+    ``calendar_registry`` (ADR 0009), when the resource has an enabled calendar provider,
+    narrows the search to slots the provider does not report as busy. With no registered
+    provider — the default for every instance that has not configured ``[calendars.*]`` —
+    the search is byte-for-byte identical to the pre-phase-9 path (CLAUDE.md §2).
     """
     resource_row = repository.find_resource(session, resource_slug)
     if resource_row is None or not resource_row.is_active:
@@ -101,6 +108,9 @@ def find_availability(
         raise InvalidRangeError("duration_min must be a positive number of minutes")
 
     window = (start_utc - _MARGIN, end_utc + _MARGIN)
+    free_busy = (
+        calendar_registry.free_busy(resource_slug, *window) if calendar_registry is not None else ()
+    )
     slots = suggest_slots(
         BookingRequest(
             resource_slug=resource_slug,
@@ -113,6 +123,7 @@ def find_availability(
         now=now,
         blackouts=repository.load_blackouts(session, resource_row.id, *window),
         existing=repository.load_booked_spans(session, resource_row.id, *window),
+        free_busy=free_busy,
         limit=_MAX_SLOTS,
         until=end_utc,
     )

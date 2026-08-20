@@ -20,6 +20,7 @@ type and fall back to an empty free/busy answer.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,6 +30,8 @@ if TYPE_CHECKING:
     from calon.config import CalendarProviderConfig
 
 from calon.domain import FreeBusySpan
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CalendarEvent",
@@ -156,6 +159,48 @@ class CalendarProviderRegistry:
     def provider_for(self, resource_slug: str) -> CalendarProvider | None:
         """The provider for this resource, or ``None`` if the resource has no sync."""
         return self._providers.get(resource_slug)
+
+    def free_busy(
+        self,
+        resource_slug: str,
+        window_start_utc: datetime,
+        window_end_utc: datetime,
+    ) -> tuple[FreeBusySpan, ...]:
+        """Provider-reported busy spans for one resource, degrading to empty on failure.
+
+        The single place that learns a provider is broken. A :class:`CalendarProviderError`
+        out of :meth:`CalendarProvider.free_busy` is logged (never with a token in the
+        message — providers ensure that) and turned into an empty tuple, so the decision
+        falls back to calon's own data (ADR 0009, CLAUDE.md §2). Resources with no
+        configured provider also return an empty tuple: nothing to ask.
+        """
+        provider = self._providers.get(resource_slug)
+        if provider is None:
+            return ()
+        try:
+            return provider.free_busy(resource_slug, window_start_utc, window_end_utc)
+        except CalendarProviderError as exc:
+            logger.warning(
+                "calendar provider %r for %r failed; degrading to calon-only availability",
+                provider.name,
+                resource_slug,
+                exc_info=exc,
+            )
+            return ()
+
+    def upsert_event(self, resource_slug: str, event: CalendarEvent) -> None:
+        """Write a booking event to the provider, degrading to a warning on failure.
+
+        This is the post-commit write-back: the booking has already been accepted inside
+        the write transaction when this runs, so a provider failure must not, and does
+        not, roll it back. The failure is surfaced through :class:`CalendarProviderError`
+        so the caller can append an audit record; the caller never re-raises this method's
+        exceptions. Resources with no configured provider are a silent no-op.
+        """
+        provider = self._providers.get(resource_slug)
+        if provider is None:
+            return
+        provider.upsert_event(resource_slug, event)
 
     def __len__(self) -> int:
         return len(self._providers)

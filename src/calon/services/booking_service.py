@@ -24,6 +24,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from calon.calendars import CalendarProviderRegistry, FreeBusySpan
 from calon.domain import AvailabilityPolicy, Decision, decide, to_utc
 from calon.domain.rules import BookingRequest
 from calon.intake.native import NATIVE_SOURCE
@@ -96,6 +97,7 @@ def submit_intent(
     raw_payload: dict[str, Any] | None = None,
     idempotency_key: str | None = None,
     instance_host: str = "localhost",
+    calendar_registry: CalendarProviderRegistry | None = None,
 ) -> Submission:
     """Record a booking request, judge it, and write the outcome.
 
@@ -106,6 +108,14 @@ def submit_intent(
     ``instance_host`` is the domain part of the iCalendar ``UID`` that gets minted on
     acceptance (ADR 0004). The route passes it through from ``Settings`` so a re-issue of
     the same booking request produces a calendar event with a stable, predictable identity.
+
+    ``calendar_registry`` (ADR 0009), when the resource has an enabled calendar provider,
+    narrows the judge to times the provider does not report as busy. The provider call is
+    made *inside* :func:`_free_busy`, which is called from ``judge()`` below, so both the
+    initial decision and the post-conflict re-judge see the same provider truth in the same
+    write transaction. With no registered provider — the default for every instance that
+    has not configured ``[calendars.*]`` — the decision is computed exactly as before
+    (CLAUDE.md §2).
 
     ``idempotency_key`` (ADR 0005) is the external-intake replay key. It is stored on the
     intent row so a concurrent request with the same key and the same source resolves to
@@ -150,6 +160,11 @@ def submit_intent(
     )
     window = _search_window(policy, now=now, start=requested_start, end=requested_end)
 
+    def free_busy() -> tuple[FreeBusySpan, ...]:
+        if calendar_registry is None:
+            return ()
+        return calendar_registry.free_busy(intent.resource_slug, *window)
+
     def judge() -> Decision:
         return decide(
             request,
@@ -158,6 +173,7 @@ def submit_intent(
             now=now,
             blackouts=repository.load_blackouts(session, known_row.id, *window),
             existing=repository.load_booked_spans(session, known_row.id, *window),
+            free_busy=free_busy(),
         )
 
     decision = judge()
