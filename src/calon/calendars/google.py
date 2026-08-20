@@ -22,6 +22,7 @@ which Google allows). No secret is ever echoed into a log line or an exception s
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -133,7 +134,11 @@ class GoogleCalendarProvider:
                     "google", "refreshed token still rejected (401); grant is dead"
                 )
         if response.status_code >= 400:
-            raise calendar_error("google", f"{method} {url} returned {response.status_code}")
+            raise calendar_error(
+                "google",
+                f"{method} {url} returned {response.status_code}",
+                status_code=response.status_code,
+            )
         return response
 
     def free_busy(
@@ -149,7 +154,9 @@ class GoogleCalendarProvider:
         :class:`CalendarProviderError` (the caller degrades to Calon-only data).
         """
         body = {
-            "items": [self.calendar_id],
+            # The freeBusy API takes a list of calendar *objects*, each keyed by "id" —
+            # a list of bare id strings is rejected with a 400.
+            "items": [{"id": self.calendar_id}],
             "timeMin": window_start_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "timeMax": window_end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
@@ -174,33 +181,59 @@ class GoogleCalendarProvider:
     def upsert_event(self, resource_slug: str, event: CalendarEvent) -> None:
         """Create or update the event keyed by ``event.uid`` (idempotent, ADR 0009).
 
-        Tries a ``PATCH`` to the (caller-chosen) id ``{uid}`` first; a 404 means the event
-        does not exist yet, so a ``POST`` creates it with that same id. Either way the
-        booking lands as exactly one event keyed by its iCal UID.
+        Tries a ``PATCH`` to the caller-chosen id first; a 404 means the event does not
+        exist yet, so a ``POST`` creates it with that same id. Either way the booking
+        lands as exactly one event keyed by its iCal UID.
+
+        Google restricts a caller-chosen event id to base32hex characters (lowercase
+        ``a``-``v`` and ``0``-``9``) — ``event.uid`` is ``<booking-id>@<instance-host>``,
+        which carries hyphens and an ``@`` that Google's API rejects outright. The event
+        is instead keyed by :func:`_google_event_id`, a deterministic hash of the UID
+        that *is* a valid id: the same booking always maps to the same Google event, so
+        the upsert stays idempotent even though the two ids differ. ``event.uid`` is
+        additionally set as the event's ``iCalUID`` field, which is what Google itself
+        (and anything reading the event outside calon) uses to recognise it.
         """
+        google_id = _google_event_id(event.uid)
         payload = {
-            "id": event.uid,
+            "iCalUID": event.uid,
             "summary": event.summary,
             "start": {"dateTime": _rfc3339(event.starts_at_utc)},
             "end": {"dateTime": _rfc3339(event.ends_at_utc)},
         }
         if event.description:
             payload["description"] = event.description
-        url = f"{_API_BASE}/calendars/{self.calendar_id}/events/{event.uid}"
+        url = f"{_API_BASE}/calendars/{self.calendar_id}/events/{google_id}"
         try:
             self._request("PATCH", url, json_body=payload)
         except CalendarProviderError as exc:
-            # A fresh 404 (not-yet-created) is expected: create it instead. Re-raise anything
-            # else so the caller audits the genuine failure.
-            if "404" not in str(exc):
+            # A fresh 404 (not-yet-created) is expected: create it instead. Re-raise
+            # anything else so the caller audits the genuine failure.
+            if exc.status_code != 404:
                 raise
             base = f"{_API_BASE}/calendars/{self.calendar_id}/events"
-            self._request("POST", base, json_body=payload)
+            # The id is only settable at creation time; the PATCH path addresses the
+            # existing resource by URL and must not send "id" in the payload.
+            self._request("POST", base, json_body={**payload, "id": google_id})
 
 
 def _rfc3339(moment: datetime) -> str:
     """Render an aware datetime as RFC 3339 with a ``Z`` suffix."""
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _google_event_id(uid: str) -> str:
+    """A Google-legal event id, deterministic in ``uid``.
+
+    Google requires a caller-chosen event id to be base32hex (lowercase ``a``-``v``
+    and ``0``-``9``, 5-1024 characters) — calon's own UID (``<booking-id>
+    @<instance-host>``) is not one, so it cannot be used directly. A SHA-1 hex digest
+    of the UID is: entirely lowercase hex digits, a subset of the allowed alphabet;
+    a fixed 40 characters, well inside the length limit; and stable, so the same
+    booking always maps to the same Google event and a re-run of the write-back
+    finds it again instead of creating a duplicate.
+    """
+    return hashlib.sha1(uid.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _parse_rfc3339(text: str) -> datetime:

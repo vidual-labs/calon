@@ -18,13 +18,15 @@ Covered:
 
 from __future__ import annotations
 
+import json
+import re
 from datetime import UTC, datetime
 
 import httpx
 import pytest
 
 from calon.calendars import CalendarEvent, CalendarProviderError
-from calon.calendars.google import GoogleCalendarProvider
+from calon.calendars.google import GoogleCalendarProvider, _google_event_id
 from calon.calendars.oauth import OAuthCredentials
 from calon.domain import FreeBusySpan
 
@@ -123,6 +125,12 @@ class TestFreeBusyHttp:
         assert span.reason == "provider report"
         assert provider._store.access_token == "tok-1"
 
+        # Regression: the freeBusy API takes a list of calendar *objects*, each keyed
+        # by "id" -- a bare list of id strings is rejected with a 400.
+        request_call = next(s for s in scripted.seen if s["path"].endswith("/freeBusy"))
+        sent = json.loads(request_call["body"])
+        assert sent["items"] == [{"id": "casa-milo@group.calendar.google.com"}]
+
     def test_the_first_401_triggers_one_refresh_and_one_retry(self):
         scripted = Scripted(
             token=[("tok-1", 3600, "seed-refresh"), ("tok-2", 3600, "rotated-2")],
@@ -158,40 +166,74 @@ class TestFreeBusyHttp:
 
 
 class TestUpsertHttp:
+    # A realistic calon UID, deliberately carrying the hyphens and "@" that Google's
+    # base32hex event-id charset (lowercase a-v, 0-9) does not allow — the shape that
+    # exposed the bug the fix below covers.
+    UID = "01a05b8d-9300-745f-8e27-eec2c492ae33@calon.example"
+
     def _event(self) -> CalendarEvent:
         return CalendarEvent(
-            uid="bk-42",
+            uid=self.UID,
             summary="Consultation",
             starts_at_utc=at(10, 0),
             ends_at_utc=at(11, 0),
         )
 
-    def test_upsert_patches_by_the_booking_uid(self):
+    def test_upsert_patches_by_a_charset_safe_id_derived_from_the_uid(self):
+        google_id = _google_event_id(self.UID)
+        # The derived id must actually satisfy Google's own event-id charset.
+        assert re.fullmatch(r"[a-v0-9]{5,1024}", google_id)
+
         scripted = Scripted(
             token=[("tok-1", 3600, "seed-refresh")],
-            auth=[(200, {"id": "bk-42", "status": "confirmed"})],
+            auth=[(200, {"id": google_id, "status": "confirmed"})],
         )
         provider = _provider(scripted)
         provider.upsert_event("default", self._event())
-        # One token refresh, one PATCH to the caller-chosen id.
+        # One token refresh, one PATCH to the derived id — never the raw UID, which
+        # Google would reject outright.
         patch_calls = [
             s
             for s in scripted.seen
-            if s["method"] == "PATCH" and s["path"].endswith("/events/bk-42")
+            if s["method"] == "PATCH" and s["path"].endswith(f"/events/{google_id}")
         ]
         assert len(patch_calls) == 1
-        assert '"id": "bk-42"' in patch_calls[0]["body"] or '"id":"bk-42"' in patch_calls[0]["body"]
+        # The raw UID travels as iCalUID — what Google (and anything else reading the
+        # event) actually uses to recognise it — not as a forced "id" on the PATCH.
+        sent = json.loads(patch_calls[0]["body"])
+        assert sent["iCalUID"] == self.UID
+        assert "id" not in sent
         assert provider._store.access_token == "tok-1"
         provider.close()
 
-    def test_upsert_falls_back_to_post_on_404(self):
+    def test_upsert_falls_back_to_post_on_404_with_the_derived_id(self):
+        google_id = _google_event_id(self.UID)
         scripted = Scripted(
             token=[("tok-1", 3600, "seed-refresh")],
-            auth=[(404, {"error": {"code": 404, "message": "notFound"}}), (200, {"id": "bk-42"})],
+            auth=[
+                (404, {"error": {"code": 404, "message": "notFound"}}),
+                (200, {"id": google_id}),
+            ],
         )
         provider = _provider(scripted)
         provider.upsert_event("default", self._event())
-        methods = [s["method"] for s in scripted.seen if not s["path"].endswith("/token")]
+        api_calls = [s for s in scripted.seen if not s["path"].endswith("/token")]
+        methods = [s["method"] for s in api_calls]
         # A 404 on the PATCH followed by a POST to create it.
         assert methods == ["PATCH", "POST"]
+        post_call = next(s for s in api_calls if s["method"] == "POST")
+        # The create call forces the same derived id, so a re-run of the write-back
+        # (which always PATCHes that id first) finds this exact event.
+        sent = json.loads(post_call["body"])
+        assert sent["id"] == google_id
+        assert sent["iCalUID"] == self.UID
         provider.close()
+
+    def test_two_different_uids_derive_different_ids(self):
+        # The derivation must not collide two distinct bookings onto one Google event.
+        assert _google_event_id("a@host") != _google_event_id("b@host")
+
+    def test_the_same_uid_always_derives_the_same_id(self):
+        # Idempotency (ADR 0009): a re-run of the write-back for the same booking
+        # must address the same Google event every time.
+        assert _google_event_id(self.UID) == _google_event_id(self.UID)

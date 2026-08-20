@@ -113,6 +113,37 @@ def _n_api(scripted: Scripted) -> int:
     return sum(1 for s in scripted.seen if not s["path"].endswith("/token"))
 
 
+class TestParseRfc3339:
+    """Regression: a naive Graph timestamp must not be read as server-local time."""
+
+    def test_a_naive_timestamp_is_treated_as_utc_regardless_of_the_hosts_tz(self):
+        import os
+        import time
+
+        from calon.calendars.microsoft import _parse_rfc3339
+
+        naive = "2026-08-20T09:00:00.0000000"  # Graph's own shape: no offset
+        original = os.environ.get("TZ")
+        try:
+            for zone in ("UTC", "America/New_York", "Asia/Tokyo"):
+                os.environ["TZ"] = zone
+                time.tzset()
+                assert _parse_rfc3339(naive) == datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
+        finally:
+            if original is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = original
+            time.tzset()
+
+    def test_an_offset_timestamp_is_honoured_as_written(self):
+        from calon.calendars.microsoft import _parse_rfc3339
+
+        assert _parse_rfc3339("2026-08-20T09:00:00+02:00") == datetime(
+            2026, 8, 20, 7, 0, tzinfo=UTC
+        )
+
+
 class TestFreeBusyGraph:
     def test_a_clean_freebusy_parses_the_busy_spans(self):
         scripted = Scripted(

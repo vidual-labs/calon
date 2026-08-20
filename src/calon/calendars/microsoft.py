@@ -155,6 +155,7 @@ class MicrosoftGraphProvider:
             raise calendar_error(
                 _ERROR_PROVIDER,
                 f"{method} {url} returned {response.status_code}",
+                status_code=response.status_code,
             )
         return response
 
@@ -252,5 +253,16 @@ def _rfc3339(moment: datetime) -> str:
 
 
 def _parse_rfc3339(text: str) -> datetime:
-    """Parse an ISO 8601 instant (Graph emits a numeric offset) into an aware UTC datetime."""
-    return datetime.fromisoformat(text).astimezone(UTC)
+    """Parse a Graph timestamp into an aware UTC datetime.
+
+    Graph's free/busy responses carry ``dateTime`` as a *naive* string (no offset —
+    e.g. ``"2026-08-20T09:00:00.0000000"``) alongside a separate ``timeZone`` field,
+    which our caller has already resolved to UTC by requesting the schedule in UTC.
+    A naive parse is therefore treated as already being UTC rather than reinterpreted
+    via ``astimezone`` — that would instead convert it *from* the server process's own
+    local zone, shifting every busy span by whatever offset the host happens to run
+    in. Some Graph endpoints do emit a numeric offset; an already-aware value is
+    honoured as written and only normalised to UTC.
+    """
+    parsed = datetime.fromisoformat(text)
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)

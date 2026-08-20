@@ -259,9 +259,13 @@ class CalendarProviderConfig:
     later re-enable (mirroring :class:`SourceConfig.enabled`).
 
     ``refresh_token`` is optional and operator-facing: it seeds the provider's token
-    store on first boot so a connection can be established without an interactive OAuth
-    round-trip. Once the provider has refreshed once, the stored refresh token (not this
-    file value) is authoritative and the file's value is ignored.
+    store on boot so a connection can be established without an interactive OAuth
+    round-trip. Once the provider has refreshed once, the in-memory rotated refresh
+    token (not this file value) is used for the rest of *that process's* run — but
+    it is held only in memory (ADR 0013: no credential store), so a restart discards
+    it and reads this file's value again. A provider that rotates its refresh token
+    on every use (as Google's may) can therefore go stale across a restart; if that
+    happens, re-run the out-of-band OAuth exchange and update this value.
     """
 
     slug: str

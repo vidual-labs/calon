@@ -53,6 +53,23 @@ per user-visible change, describing the effect rather than the implementation.
   times in UTC, regardless of the timezone the request declared — unlike the
   native booking API, which reports them in the requester's own timezone as
   documented.
+- The Google Calendar and Microsoft 365 OAuth token refresh posted a JSON body;
+  both providers' token endpoints require form encoding and rejected it, so a
+  connected calendar's access token could never actually be refreshed.
+- A Google Calendar write-back sent `event.uid` as the event's own `id`, but
+  calon's UID contains characters (`-`, `@`) Google's event-id charset does not
+  allow, so the write-back always failed for a connected Google resource.
+  Bookings are now keyed by a derived id and identified to Google by `iCalUID`.
+- The `freeBusy` request to Google Calendar sent a bare list of calendar-id
+  strings; the API requires a list of objects and rejected the request.
+- A Microsoft Graph timestamp with no UTC offset (the shape Graph's free/busy
+  response actually uses) was reinterpreted in the server process's local
+  timezone instead of being read as UTC, which could shift a resource's busy
+  time by several hours depending on the host's `TZ`.
+- A Google Calendar write-back's create-vs-update decision inspected the
+  exception message for the substring `"404"`, which could misfire when the
+  request URL happened to contain those digits. It now checks the response's
+  actual HTTP status.
 
 ### Security
 

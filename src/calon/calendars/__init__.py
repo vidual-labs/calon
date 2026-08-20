@@ -50,7 +50,19 @@ class CalendarProviderError(RuntimeError):
     answer: a request is judged on calon's own data rather than failing. The error's
     ``str`` is safe to log because it must not echo a token; the providers'
     constructors ensure that.
+
+    ``status_code`` carries the response's HTTP status when the failure was an HTTP
+    error response (``None`` for a transport failure or a non-JSON body). It exists
+    so a caller that needs to branch on "was this specifically a 404" — the
+    create-vs-update decision in ``upsert_event`` — has a structured value to check
+    instead of substring-matching the digits out of the error's message, which can
+    misfire when the request URL itself happens to contain the digits "404" (a UUID's
+    hex, for instance).
     """
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass(frozen=True, slots=True)

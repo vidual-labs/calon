@@ -30,6 +30,7 @@ class TestRefreshTokenBody:
 
         def handler(request: httpx.Request) -> httpx.Response:
             seen["path"] = request.url.path
+            seen["content_type"] = request.headers.get("content-type", "")
             seen["body"] = request.content.decode()
             return httpx.Response(
                 200,
@@ -45,11 +46,19 @@ class TestRefreshTokenBody:
             _client(handler), token_url=_TOKEN_URL, credentials=CREDS, refresh_token="seed-rot"
         )
         assert seen["path"].endswith("/token")
-        sent = seen["body"]
-        # The body must carry the grant type and the seed refresh token (not the rotated one).
-        assert "grant_type" in sent and "refresh_token" in sent
-        assert "seed-rot" in sent
-        assert "cid" in sent and "csecret" in sent
+        # RFC 6749 §4.1.3: the token endpoint takes a form-encoded body, not JSON —
+        # both Google's and Microsoft's endpoints reject a JSON grant with a 400.
+        assert seen["content_type"].startswith("application/x-www-form-urlencoded")
+        from urllib.parse import parse_qs
+
+        sent = parse_qs(seen["body"])
+        assert sent == {
+            "grant_type": ["refresh_token"],
+            "client_id": ["cid"],
+            "client_secret": ["csecret"],
+            # The seed refresh token is sent, not a rotated one — there isn't one yet.
+            "refresh_token": ["seed-rot"],
+        }
         assert access == "tok-A"
         assert expires == 3599
         assert refresh == "rotated-rot"

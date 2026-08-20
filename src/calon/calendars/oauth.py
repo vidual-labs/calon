@@ -37,14 +37,18 @@ __all__ = [
 ]
 
 
-def calendar_error(where: str, detail: str = "") -> CalendarProviderError:
+def calendar_error(
+    where: str, detail: str = "", *, status_code: int | None = None
+) -> CalendarProviderError:
     """A labelled provider error. The message names the *cause*, never a credential.
 
     ``where`` is the provider/operation (``"google free/busy"``) and ``detail`` a short
-    reason, both safe to log.
+    reason, both safe to log. ``status_code`` carries the response's HTTP status when
+    the failure was an HTTP error response, so a caller can branch on it structurally
+    (see :class:`CalendarProviderError`) rather than parsing the message.
     """
     message = where if not detail else f"{where}: {detail}"
-    return CalendarProviderError(message)
+    return CalendarProviderError(message, status_code=status_code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,17 +102,20 @@ def refresh_access_token(
 ) -> tuple[str, int, str]:
     """Post a refresh-token grant; return ``(access_token, expires_in, refresh_token)``.
 
-    One POST to ``token_url`` with ``grant_type=refresh_token``. A non-200 answer, a
-    non-JSON body, or a missing ``access_token``/``expires_in`` all raise
-    :class:`CalendarProviderError` (via :func:`calendar_error`) — the caller treats that
-    as a dead grant and degrades (CLAUDE.md §2). The returned refresh token is the one
-    the grant echoed back: providers rotate refresh tokens, so the next call must use
-    *this* one, not the original (the provider persists the refreshed store, which is why
-    the TOML's seed value is authoritative only before the first real refresh).
+    One POST to ``token_url`` with ``grant_type=refresh_token``, as
+    ``application/x-www-form-urlencoded`` — RFC 6749 §4.1.3 requires it for the token
+    endpoint, and both Google's and Microsoft's reject a JSON body with a ``400``. A
+    non-200 answer, a non-JSON body, or a missing ``access_token``/``expires_in`` all
+    raise :class:`CalendarProviderError` (via :func:`calendar_error`) — the caller
+    treats that as a dead grant and degrades (CLAUDE.md §2). The returned refresh token
+    is the one the grant echoed back: providers rotate refresh tokens, so the next call
+    must use *this* one, not the original (the provider persists the refreshed store,
+    which is why the TOML's seed value is authoritative only before the first real
+    refresh).
     """
     response = client.post(
         token_url,
-        json={
+        data={
             "grant_type": "refresh_token",
             "client_id": credentials.client_id,
             "client_secret": credentials.client_secret,
