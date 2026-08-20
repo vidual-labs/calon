@@ -149,7 +149,64 @@ Anything that sets `X-Forwarded-Proto` correctly qualifies — Caddy, nginx, or 
 With TLS, set `CALON_BASE_URL` to the `https://` address so the session cookie gains the
 `Secure` attribute and the calendar links are absolute and correct.
 
+## Resource calendar sync
+
+This is optional and off by default. With no `[calendars.<resource_slug>]` block in
+`config/calon.toml`, a resource has **no external calendar**: availability is checked
+against calon's own bookings only, and the requester gets the `.ics` file plus the Google
+and Outlook deeplinks. That standalone behaviour is the default and is fully available.
+
+To connect a resource's **own** Google Calendar or Microsoft 365 calendar, you do **one
+thing out-of-band**: complete the provider's OAuth flow once and paste the resulting
+**refresh token** into the config. calon does not run OAuth and holds no account
+passwords. When enabled, calon reads that calendar's free/busy when checking availability
+and writes each accepted booking back to it, so you do not copy bookings in by hand.
+
+The config block (see `config/calon.example.toml`):
+
+```toml
+[calendars.default]
+provider = "google"            # or "microsoft"
+calendar_id = "you@example.com"
+enabled = true
+refresh_token = "..."          # the out-of-band refresh token
+```
+
+### Google Calendar
+
+1. In Google Cloud Console, create a project and enable the **Calendar API**.
+2. Create an **OAuth client ID** of type *Desktop app*; note the client id, client
+   secret, and redirect URI you registered.
+3. Run the one-time device/browser flow requesting the `https://www.googleapis.com/auth/
+   calendar.events` scope. When it completes you receive an access token **and a refresh
+   token** — use the refresh token.
+4. `calendar_id` for the account's primary calendar is that account's email
+   (`you@example.com`).
+
+### Microsoft 365
+
+1. In the Azure portal, register an application and add the **Graph** `Calendars.ReadWrite`
+   (or `Mail.ReadWrite`) delegated permission; note the application (client) id and the
+   client secret.
+2. Run the one-time authorization-code flow with `offline_access` in the scope so the
+   response includes a refresh token; use that refresh token.
+3. `calendar_id` is the **user** the calendar belongs to, e.g.
+   `you@tenant.onmicrosoft.com` — the primary calendar of that user is the one synced.
+
+### Security and degradation
+
+`config/calon.toml` holds the refresh token, so treat it like a password: keep it out of
+version control (the example file is a template only), and restrict file permissions on a
+production host. The refresh token is held in memory for the process lifetime; rotation is
+manual (update the config and restart).
+
+When the provider API is unreachable or errors, calon degrades to its own database as the
+sole source of truth **for that request** rather than failing the booking — an unreachable
+calendar makes availability less accurate, it does not take booking down.
+
 ## Backups
+
+
 
 **The SQLite database file is the entirety of your booking state.** Back it up.
 

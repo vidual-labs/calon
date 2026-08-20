@@ -181,3 +181,41 @@ organizer_email = ""
 # phone = "fld_phone_id"
 # subject = "fld_subject_id"
 # timezone = "Europe/Berlin"
+
+# ---------------------------------------------------------------------------
+# Resource calendar sync (optional, off by default) — ADR 0009 / ADR 0013.
+#
+# calon is standalone first: with no [calendars] block a resource behaves
+# exactly as before — conflicts are checked against calon's own bookings only,
+# and the requester still gets the .ics plus the Google/Outlook deeplinks.
+#
+# To connect a resource's OWN calendar (Google Calendar or Microsoft 365),
+# add one [calendars.<resource_slug>] block. The slug must match a [resource]
+# slug you already defined (e.g. "default"). When enabled, calon will:
+#   * read that calendar's real busy time when checking availability, and
+#   * write each accepted booking back to that calendar as an event.
+# If the provider is unreachable or errors, that degrades back to
+# Calon-only availability for that request — it does NOT fail the booking.
+#
+# provider       "google" (Google Calendar) or "microsoft" (Microsoft 365).
+# calendar_id    the calendar handle:
+#                  google    -> the calendar id (usually the account email,
+#                                e.g. "you@example.com") or a secondary-calendar id.
+#                  microsoft -> the user the calendar belongs to
+#                                (e.g. "you@tenant.onmicrosoft.com"); the
+#                                primary calendar of that user is synced.
+# enabled        true to turn the connection on for this resource.
+# refresh_token  the OAuth refresh token you already obtained for this account.
+#                calon does NOT run OAuth: complete the provider's
+#                authorization flow out-of-band and paste the resulting
+#                refresh token here. See "Connecting a resource's calendar"
+#                in docs/self-hosting.md for exactly how to get it.
+#
+# This file is git-ignored and the refresh_token is a secret — never commit
+# your real config/calon.toml.
+# ---------------------------------------------------------------------------
+# [calendars.default]
+# provider = "google"
+# calendar_id = "you@example.com"
+# enabled = true
+# refresh_token = "replace-me-with-the-oauth2-refresh-token"

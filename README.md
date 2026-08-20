@@ -234,6 +234,38 @@ same boundary; the core never learns their shapes.
 See [`docs/external-intake.md`](docs/external-intake.md) and
 [ADR 0012](docs/adr/0012-external-intake-final.md).
 
+## Calendar sync
+
+By default, a resource has **no external calendar**, and nothing changes for it:
+availability is checked against calon's own bookings only, and the requester gets the
+`.ics` file plus the Google and Outlook deeplinks. This is the standalone baseline and is
+what the native test suite exercises.
+
+An operator can optionally connect the resource's **own** Google Calendar or Microsoft 365
+calendar. When enabled, two things happen:
+
+- **Availability now sees the real calendar.** calon reads the connected calendar's
+  free/busy for the window under consideration and treats any provider-reported busy time
+  as a conflict — alongside calon's own bookings. A slot that calon's own database has
+  free but the resource's external calendar already has taken is now rejected with the
+  dedicated `PROVIDER_CONFLICT` code (rather than `SLOT_CONFLICT`), so a requester learns
+  the clash is with the resource's existing calendar, not with another booking.
+- **Accepted bookings are written back.** When a booking is accepted, Calon creates a
+  matching event on the connected calendar (amendments update it), so the operator does not
+  copy the booking into their calendar by hand.
+
+The connection is opt-in, per resource, in `config/calon.toml` (one
+`[calendars.<resource_slug>]` block: provider, calendar id, and an out-of-band refresh
+token — calon does not perform OAuth). If the provider API is unreachable or errors,
+calon **degrades to its own database** as the sole source of truth for that request rather
+than failing the booking — an unreachable calendar makes availability less accurate, it
+does not take booking down.
+
+See [ADR 0009](docs/adr/0009-optional-resource-calendar-sync.md) for the decision,
+[ADR 0013](docs/adr/0013-minimal-http-client-and-sqlite-credential-store.md) for the
+client and credential-storage choices, and the self-hosting doc for how to obtain a
+refresh token for Google or Microsoft.
+
 ## Roadmap
 
 | Phase | Deliverable | Version | Status |
@@ -247,7 +279,7 @@ See [`docs/external-intake.md`](docs/external-intake.md) and
 | 6 | Docker packaging and self-hosting docs | — | done |
 | 7 | **First release** | `0.1.0` | done |
 | 8 | First real provider adapter, once a genuine payload exists | `0.2.0` | done |
-| 9 | Optional resource calendar sync: Google Calendar & Microsoft 365 free/busy check plus write-back of accepted bookings, behind a `CalendarProvider` interface, opt-in per resource | `0.3.0` | |
+| 9 | Optional resource calendar sync: Google Calendar & Microsoft 365 free/busy check plus write-back of accepted bookings, behind a `CalendarProvider` interface, opt-in per resource | `0.3.0` | done |
 
 Post-`0.3.0` candidates: requester-facing cancel and reschedule links.
 

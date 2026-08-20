@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 
+from calon.calendars import CalendarProviderRegistry
 from calon.config import Settings
 from calon.db import Database
 from calon.intake.external import SourceRegistry
@@ -14,10 +15,12 @@ from calon.security import SESSION_COOKIE, LoginStore
 
 __all__ = [
     "AuthorisedOperator",
+    "CalendarRegistryDep",
     "DatabaseDep",
     "RegistryDep",
     "SettingsDep",
     "get_authorised_operator",
+    "get_calendar_registry",
     "get_database",
     "get_settings",
     "get_source_registry",
@@ -105,7 +108,25 @@ def get_source_registry(request: Request) -> SourceRegistry:
     return registry
 
 
+def get_calendar_registry(request: Request) -> CalendarProviderRegistry:
+    """The startup-built calendar-provider registry (ADR 0009).
+
+    Built once in ``create_app``'s lifespan from the operator config's
+    ``[calendars.<slug>]`` tables and lives on ``app.state``. Exposing it as a dependency —
+    rather than touching ``app.state`` inside the route body — keeps the routes testable:
+    a test override replaces the registry wholesale. A registry holding no providers is
+    the normal case for an instance that has not configured calendar sync; the routes
+    still run, and :meth:`CalendarProviderRegistry.free_busy` simply returns ``()``.
+    """
+    registry = request.app.state.calendar_registry
+    if registry is None:
+        raise RuntimeError("calendar registry not initialised; run the app lifespan first")
+    assert isinstance(registry, CalendarProviderRegistry)
+    return registry
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DatabaseDep = Annotated[Database, Depends(get_database)]
 RegistryDep = Annotated[SourceRegistry, Depends(get_source_registry)]
+CalendarRegistryDep = Annotated[CalendarProviderRegistry, Depends(get_calendar_registry)]
 AuthorisedOperator = Annotated[LoginStore, Depends(get_authorised_operator)]

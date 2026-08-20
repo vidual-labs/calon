@@ -36,6 +36,7 @@ from calon.domain import AvailabilityPolicy, BlackoutPeriod, Resource
 
 __all__ = [
     "CalendarConfig",
+    "CalendarProviderConfig",
     "ConfigError",
     "OperatorConfig",
     "Settings",
@@ -216,6 +217,106 @@ def _sources(path: Path, raw: dict[str, Any]) -> dict[str, SourceConfig]:
     return sources
 
 
+# --------------------------------------------------------------------------------------
+# [calendars.<resource_slug>] — optional per-resource calendar sync (ADR 0009)
+# --------------------------------------------------------------------------------------
+#
+# Mirrors ``[sources.<slug>]``: one table per resource, keyed by the resource slug the
+# operator wants to connect to a real calendar (Google or Microsoft 365). Absence of the
+# table for a resource is the default and is the *only* way a resource has no provider —
+# CLAUDE.md §2 (a resource with no provider configured behaves exactly as today).
+#
+# The operator-facing shape carries only what the config file legitimately holds: which
+# provider, which calendar, the calendar id on the provider side, and (optionally) an
+# already-obtained refresh token for bootstrapping when the operator has not yet set up a
+# token exchange. The operator's *runtime* credentials are stored in SQLite by the
+# provider, not in the file (ADR 0013, to be written in Batch 6 / PR discussion). This
+# dataclass is the operator-facing shape, parsed at startup (never mid-request), and the
+# per-calendar invariants are checked here so a misconfigured provider fails the boot,
+# not a later booking.
+
+
+KNOWN_CALENDAR_PROVIDERS = frozenset({"google", "microsoft"})
+
+
+@dataclass(frozen=True, slots=True)
+class CalendarProviderConfig:
+    """One configured calendar provider for a resource, as the operator wrote it.
+
+    ``slug`` is the resource slug this provider serves, so :func:`CalendarProviderRegistry
+    .provider_for` looks it up. ``provider`` narrows the operator's choice to the
+    provider names the instance supports (``google`` or ``microsoft`` today); any other
+    name is a startup error because the operator's config is not the right place to learn
+    about a typo (CLAUDE.md: read the config strictly, never shrug).
+
+    ``calendar_id`` is the provider-side calendar (e.g. Google Calendar's
+    ``primary`` or a specific id) to read free/busy from and to write events into; it
+    defaults to ``primary`` for both providers.
+
+    ``enabled`` defaults to ``True`` so a configured provider starts serving on boot. The
+    only way a provider is *not* built is to omit the ``[calendars.<slug>]`` table for
+    that resource; ``enabled = false`` is a soft-disable that preserves the config for
+    later re-enable (mirroring :class:`SourceConfig.enabled`).
+
+    ``refresh_token`` is optional and operator-facing: it seeds the provider's token
+    store on first boot so a connection can be established without an interactive OAuth
+    round-trip. Once the provider has refreshed once, the stored refresh token (not this
+    file value) is authoritative and the file's value is ignored.
+    """
+
+    slug: str
+    provider: str
+    calendar_id: str = "primary"
+    enabled: bool = True
+    refresh_token: str = ""
+
+
+def _calendars(path: Path, raw: dict[str, Any]) -> dict[str, CalendarProviderConfig]:
+    """Parse the ``[calendars.<resource_slug>]`` block into validated per-resource configs.
+
+    The section is parsed at startup (never mid-request) exactly like ``_sources`` so that
+    an operator who sets up a sync now and only wires up the provider later (e.g. while the
+    adapter module is still under review) can keep an ``enabled = false`` table around for
+    reference. A resource with no ``[calendars.<slug>]`` table has no provider (the
+    CLAUDE.md §2 default).
+    """
+    calendars_raw = raw.get("calendars", {})
+    if not isinstance(calendars_raw, dict):
+        raise ConfigError(f"{path}: [calendars] must be a table of per-resource tables")
+
+    calendars: dict[str, CalendarProviderConfig] = {}
+    for slug, entry in calendars_raw.items():
+        if not isinstance(entry, dict):
+            raise ConfigError(f"{path}: [calendars.{slug}] must be a table")
+
+        allowed = frozenset({"provider", "calendar_id", "enabled", "refresh_token"})
+        _reject_unknown(path, f"calendars.{slug}", entry, allowed)
+
+        label = f"[calendars.{slug}] "
+
+        if "provider" not in entry:
+            raise ConfigError(f"{path}: {label}provider is required ('google' or 'microsoft')")
+        provider = entry["provider"]
+        if not isinstance(provider, str) or provider not in KNOWN_CALENDAR_PROVIDERS:
+            names = ", ".join(sorted(KNOWN_CALENDAR_PROVIDERS))
+            raise ConfigError(f"{path}: {label}provider must be one of: {names}")
+        if "calendar_id" in entry and not isinstance(entry["calendar_id"], str):
+            raise ConfigError(f"{path}: {label}calendar_id must be a string")
+        if "enabled" in entry and not isinstance(entry["enabled"], bool):
+            raise ConfigError(f"{path}: {label}enabled must be true or false")
+        if "refresh_token" in entry and not isinstance(entry["refresh_token"], str):
+            raise ConfigError(f"{path}: {label}refresh_token must be a string")
+
+        calendars[slug] = CalendarProviderConfig(
+            slug=slug,
+            provider=provider,
+            calendar_id=entry.get("calendar_id", "primary"),
+            enabled=entry.get("enabled", True),
+            refresh_token=entry.get("refresh_token", ""),
+        )
+    return calendars
+
+
 @dataclass(frozen=True, slots=True)
 class OperatorConfig:
     """Everything the operator decides, resolved into the domain's own value objects."""
@@ -244,6 +345,7 @@ class OperatorConfig:
     blackouts: tuple[BlackoutPeriod, ...] = ()
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
     sources: dict[str, SourceConfig] = field(default_factory=dict)
+    calendars: dict[str, CalendarProviderConfig] = field(default_factory=dict)
 
 
 _INSTANCE_KEYS = frozenset({"name", "timezone"})
@@ -270,7 +372,7 @@ _CALENDAR_KEYS = frozenset({"event_title", "location", "organizer_name", "organi
 # ``SourceRegistry.from_config`` only wires the sources the adapter package implements
 # and leaves the rest disabled.
 _TOP_LEVEL_KEYS = frozenset(
-    {"instance", "resource", "availability", "blackout", "calendar", "sources"}
+    {"instance", "resource", "availability", "blackout", "calendar", "sources", "calendars"}
 )
 
 
@@ -320,6 +422,7 @@ def load_operator_config(path: Path | None) -> OperatorConfig:
                 organizer_email=_str(path, calendar, "organizer_email", ""),
             ),
             sources=_sources(path, raw),
+            calendars=_calendars(path, raw),
         )
     except ConfigError:
         raise

@@ -14,6 +14,7 @@ from calon.domain import (
     BlackoutPeriod,
     BookedSpan,
     BookingRequest,
+    FreeBusySpan,
     Resource,
 )
 
@@ -97,6 +98,11 @@ def make_request(
 def booked(start: datetime, end: datetime, policy: AvailabilityPolicy | None = None) -> BookedSpan:
     """An existing booking, with its block bounds materialised from ``policy``."""
     return BookedSpan.of(start, end, policy or make_policy())
+
+
+def free_busy(start: datetime, end: datetime, reason: str = "") -> FreeBusySpan:
+    """A provider-reported busy interval (ADR 0009)."""
+    return FreeBusySpan(starts_at_utc=start, ends_at_utc=end, reason=reason)
 
 
 def blackout(start: datetime, end: datetime, reason: str = "") -> BlackoutPeriod:

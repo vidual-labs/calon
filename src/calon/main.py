@@ -94,6 +94,20 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
             len(registry),
         )
 
+        # Calendar providers are a startup-time decision, like sources (ADR 0009): the
+        # set of resources with an enabled ``[calendars.<slug>]`` is read once and no
+        # per-request probing of it is possible. An instance with no calendars configured
+        # gets an empty registry — every provider call degrades to calon-only
+        # availability, which is exactly today's behaviour (CLAUDE.md §2).
+        from calon.calendars import CalendarProviderRegistry
+
+        calendar_registry = CalendarProviderRegistry.from_config(resolved_config.calendars)
+        app.state.calendar_registry = calendar_registry
+        logger.info(
+            "calon calendars: %d provider(s) registered",
+            len(calendar_registry),
+        )
+
         # The operator's login store. Built only when a login is configured; when it is
         # not, ``login_store`` is ``None`` and every login-gated route refuses with 503
         # while the public booking flow keeps working (ADR 0010).

@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import AwareDatetime
 
-from calon.api.deps import DatabaseDep
+from calon.api.deps import CalendarRegistryDep, DatabaseDep
 from calon.clock import utcnow
 from calon.schemas import AvailabilityResponse, SlotOut
 from calon.services import availability_service
@@ -27,6 +27,7 @@ router = APIRouter(tags=["availability"])
 )
 def get_availability(
     database: DatabaseDep,
+    calendar_registry: CalendarRegistryDep,
     resource_slug: Annotated[str, Query(description="Which bookable resource.")],
     range_start: Annotated[
         AwareDatetime,
@@ -55,6 +56,10 @@ def get_availability(
     """Every slot that would be accepted right now, in the window asked about.
 
     Advisory only: these are not held, and nothing here reserves anything.
+
+    The provider's free/busy span (ADR 0009) narrows the search when the resource has an
+    enabled calendar provider with a working adapter. With no registered provider — the
+    default — the response is byte-for-byte identical to the pre-phase-9 path.
     """
     with database.read() as session:
         try:
@@ -66,6 +71,7 @@ def get_availability(
                 timezone=timezone,
                 duration_min=duration_min,
                 now=utcnow(),
+                calendar_registry=calendar_registry,
             )
         except availability_service.UnknownResourceError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc

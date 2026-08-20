@@ -28,6 +28,7 @@ class DecisionCode(StrEnum):
     BLACKOUT_PERIOD = "BLACKOUT_PERIOD"
     DAILY_LIMIT_REACHED = "DAILY_LIMIT_REACHED"
     SLOT_CONFLICT = "SLOT_CONFLICT"
+    PROVIDER_CONFLICT = "PROVIDER_CONFLICT"
     ACCEPTED = "ACCEPTED"
 
 
@@ -87,6 +88,11 @@ class Decision:
     evaluated_at: datetime
     violations: tuple[Violation, ...] = ()
     suggestions: tuple[SlotSuggestion, ...] = field(default=())
+    #: Whether the accepted booking was written back to a calendar provider.
+    #: ``True`` when the provider's upsert succeeded; ``False`` when the write-back
+    #: degrades (provider failed or is absent). For rejected decisions always ``False``.
+    #: ADR 0009 — informational only; the booking's own DB transaction is never affected.
+    calendar_synced: bool = field(default=False)
 
     @property
     def accepted(self) -> bool:
@@ -109,3 +115,14 @@ class Decision:
         evaluation cheap and total. The caller attaches them.
         """
         return replace(self, suggestions=suggestions)
+
+    def with_calendar_synced(self, synced: bool) -> Decision:
+        """Return a copy marking the booking as synced to the calendar provider.
+
+        ADR 0009: after the acceptance transaction commits, the route (or the service)
+        calls the provider's ``upsert_event``. On success it patches the decision with
+        ``calendar_synced=True``; on degradation the flag remains ``False``. The decision
+        itself is already committed to the database — this flag is purely informational and
+        never causes a re-judgement or a rollback.
+        """
+        return replace(self, calendar_synced=synced)
