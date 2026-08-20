@@ -231,6 +231,9 @@ def _build_provider(provider: str, cfg: CalendarProviderConfig) -> CalendarProvi
     intake registry uses (``SourceRegistry.from_config`` imports its modules only at
     boot, so the package is importable without every adapter).
     """
+    from calon.calendars.oauth import OAuthCredentials
+
+    credentials = OAuthCredentials(client_id=cfg.client_id, client_secret=cfg.client_secret)
     if provider == "google":
         from calon.calendars import google as google_module
 
@@ -238,6 +241,7 @@ def _build_provider(provider: str, cfg: CalendarProviderConfig) -> CalendarProvi
             resource_slug=cfg.slug,
             calendar_id=cfg.calendar_id,
             refresh_token=cfg.refresh_token,
+            credentials=credentials,
         )
     if provider == "microsoft":
         from calon.calendars import microsoft as microsoft_module
@@ -246,6 +250,7 @@ def _build_provider(provider: str, cfg: CalendarProviderConfig) -> CalendarProvi
             resource_slug=cfg.slug,
             calendar_id=cfg.calendar_id,
             refresh_token=cfg.refresh_token,
+            credentials=credentials,
         )
     raise RuntimeError(f"provider {provider!r} is not supported")
 

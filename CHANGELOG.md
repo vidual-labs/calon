@@ -12,11 +12,18 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
-- _Nothing yet._
+- `[calendars.<resource_slug>]` now accepts `client_id` and `client_secret` — the
+  connected provider's OAuth app credentials. Previously there was nowhere to
+  configure them, so a connected Google Calendar or Microsoft 365 calendar could
+  never actually refresh an access token and every sync attempt failed silently.
 
 ### Changed
 
-- _Nothing yet._
+- **BREAKING:** an enabled `[calendars.<resource_slug>]` entry now requires both
+  `client_id` and `client_secret`; calon refuses to start without them rather
+  than booting into a calendar sync that can never work. If you already have a
+  `[calendars.*]` block enabled, add both before upgrading (see
+  `docs/self-hosting.md`).
 
 ### Fixed
 
