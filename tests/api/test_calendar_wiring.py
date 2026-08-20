@@ -203,6 +203,58 @@ def test_a_resource_with_no_provider_is_a_silent_no_op(
 
 
 # --------------------------------------------------------------------------------
+# The public booking form
+# --------------------------------------------------------------------------------
+#
+# Regression: POST /book used to call submit_intent without calendar_registry and
+# never called perform_write_back at all, so a resource with a connected provider
+# got neither its free/busy checked nor its accepted bookings written back through
+# the form — only through the JSON API. The form is a second intake path onto the
+# same submit_intent() call (CLAUDE.md §4.2); it must carry the same arguments.
+
+
+def _form_fields(*, date: str, time: str) -> dict[str, str]:
+    return {
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "phone": "",
+        "date": date,
+        "time": time,
+        "subject": "Form booking",
+        "notes": "",
+    }
+
+
+def test_a_provider_busy_slot_is_rejected_through_the_form(client: TestClient) -> None:
+    provider = FakeCalendar()
+    provider.seed_busy(
+        "default",
+        datetime(2026, 9, 2, 8, 0, tzinfo=UTC),  # 10:00 Europe/Berlin
+        datetime(2026, 9, 2, 9, 0, tzinfo=UTC),  # 11:00 Europe/Berlin
+        reason="busy",
+    )
+    _install_provider(client, provider)
+
+    response = client.post("/book", data=_form_fields(date="2026-09-02", time="10:00"))
+
+    assert response.status_code == 200
+    # Jinja2 autoescapes the apostrophe in "resource's" as "&#39;".
+    assert "This time cannot be booked" in response.text
+    assert "already-scheduled time" in response.text
+
+
+def test_an_accepted_form_booking_is_written_back_to_the_provider(client: TestClient) -> None:
+    provider = FakeCalendar()
+    _install_provider(client, provider)
+
+    response = client.post("/book", data=_form_fields(date="2026-09-02", time="10:00"))
+
+    assert response.status_code == 200
+    assert "Booked." in response.text
+    assert len(provider.events("default")) == 1
+
+
+# --------------------------------------------------------------------------------
 # Standalone regression
 # --------------------------------------------------------------------------------
 

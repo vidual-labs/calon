@@ -41,6 +41,10 @@ per user-visible change, describing the effect rather than the implementation.
 - A booking accepted through external intake minted its calendar `UID` from the
   source's own slug instead of the instance's configured host, unlike the native
   booking API and the public booking form.
+- The public booking form (`POST /book`) never checked a connected resource's
+  calendar for conflicts and never wrote accepted bookings back to it, unlike
+  the booking API — a resource with calendar sync configured could be double
+  booked through its own booking page.
 
 ### Security
 

@@ -30,7 +30,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from calon.api.deps import AuthorisedOperator, DatabaseDep, SettingsDep
+from calon.api.deps import AuthorisedOperator, CalendarRegistryDep, DatabaseDep, SettingsDep
+from calon.api.v1 import _calendar_writeback
 from calon.calendarkit import build_deeplinks, event_for, event_uid, ics_filename
 from calon.clock import utcnow
 from calon.config import Settings
@@ -117,13 +118,17 @@ async def book_form_post(
     request: Request,
     database: DatabaseDep,
     settings: SettingsDep,
+    calendar_registry: CalendarRegistryDep,
 ) -> HTMLResponse:
     """Handle a submitted booking form.
 
     Builds a ``BookingIntentIn``, calls ``submit_intent`` exactly as the API does
     (``source="native"``), and renders the result in place — success with handoff
     links on acceptance, or the form re-displayed with the rejection reasons and
-    all user-entered values preserved.
+    all user-entered values preserved. Also mirrors the API route's post-commit
+    calendar write-back (ADR 0009): a resource with a connected provider gets its
+    free/busy checked and the accepted booking written back exactly as it would
+    through ``POST /api/v1/bookings`` — the form is not a second, divergent path.
     """
     form = await request.form()
     form_data: dict[str, str] = {}
@@ -206,8 +211,10 @@ async def book_form_post(
             now=now,
             raw_payload=raw_payload,
             instance_host=settings.instance_host,
+            calendar_registry=calendar_registry,
         )
         success_ctx = None
+        intent_row = None
         if submission.booking is not None:
             booking_row = session.get(Booking, submission.booking.id)
             intent_row = session.get(BookingIntent, submission.intent_id)
@@ -222,6 +229,18 @@ async def book_form_post(
                     "booking_id": submission.booking.id,
                     "handoff": handoff,
                 }
+
+    # Post-commit write-back (ADR 0009), outside the transaction: the provider is a
+    # network hop and a failing provider must not hold the DB lock or roll the
+    # booking back. A resource with no configured provider is a silent no-op.
+    if submission.booking is not None and intent_row is not None:
+        _calendar_writeback.perform_write_back(
+            database,
+            calendar_registry,
+            booking=submission.booking,
+            intent=intent_row,
+            now=now,
+        )
 
     # --- render ---
     if submission.accepted:
