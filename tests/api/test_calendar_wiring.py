@@ -131,8 +131,9 @@ def test_an_accepted_booking_is_written_back_and_audited(
     response = client.post("/api/v1/bookings", json=booking_payload(TOMORROW_10_00, TOMORROW_10_30))
 
     assert response.status_code == 201
+    body = response.json()
     # The response reports the sync succeeded.
-    assert response.json()["decision"]["calendar_synced"] is True
+    assert body["decision"]["calendar_synced"] is True
 
     with database.read() as session:
         booking = session.scalars(select(Booking)).one()
@@ -143,6 +144,13 @@ def test_an_accepted_booking_is_written_back_and_audited(
     assert synced is not None
     assert synced.uid == booking.ics_uid
     assert synced.starts_at_utc == booking.start_utc
+
+    # Regression: the stored ``ics_uid`` used to be minted from the intent's id,
+    # while the handoff (and the .ics file) was built from the booking's id — the
+    # requester's calendar entry and the provider's event could carry different
+    # UIDs for the same booking. All three must now agree on one identity.
+    assert body["booking"]["calendar"]["uid"] == booking.ics_uid
+    assert booking.ics_uid == f"{booking.id}@localhost"
 
     # The write-back is audited, and only after the booking was committed.
     types = _audit_types(client, database)

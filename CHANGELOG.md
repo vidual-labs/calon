@@ -34,6 +34,13 @@ per user-visible change, describing the effect rather than the implementation.
   cleared the browser's session cookie.
 - Timestamps on the operator dashboard were rendered as malformed, unparseable
   ISO 8601 strings (a doubled UTC suffix).
+- An accepted booking's `.ics` file, its calendar handoff, and the event written
+  back to a connected provider could carry three different `UID`s for the same
+  booking, so a calendar could not recognise them as the same event. All three
+  now agree on one identity.
+- A booking accepted through external intake minted its calendar `UID` from the
+  source's own slug instead of the instance's configured host, unlike the native
+  booking API and the public booking form.
 
 ### Security
 

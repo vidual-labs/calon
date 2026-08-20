@@ -167,6 +167,28 @@ def test_accepted_booking_is_written_to_the_database(
         assert booking.status == "confirmed"
 
 
+def test_the_calendar_uid_uses_the_instance_host_not_the_source_slug(
+    intake_client: TestClient, database: Database
+) -> None:
+    # Regression: the intake route used to pass the *source slug* as
+    # ``instance_host`` to ``submit_intent``, so a booking accepted through
+    # external intake minted a UID like ``<id>@demo`` instead of
+    # ``<id>@<CALON_INSTANCE_HOST>`` — the same value the native route and the
+    # calendar write-back use.
+    body = json.dumps(_payload()).encode("utf-8")
+    headers = _headers(body, idempotency_key="key-uid")
+    r = intake_client.post("/api/v1/demo", content=body, headers=headers)
+    assert r.status_code == 201, r.text
+
+    intent_id = r.json()["intent_id"]
+    with database.read() as session:
+        booking = session.execute(
+            select(Booking).where(Booking.intent_id == intent_id)
+        ).scalar_one()
+        assert booking.ics_uid == f"{booking.id}@localhost"
+        assert not booking.ics_uid.endswith("@demo")
+
+
 # --------------------------------------------------------------------------
 # Idempotency
 # --------------------------------------------------------------------------

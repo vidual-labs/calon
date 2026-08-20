@@ -24,11 +24,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from calon.models import Booking, BookingIntent
 
 __all__ = [
     "CalendarEvent",
     "build_deeplinks",
     "build_ics",
+    "event_for",
     "event_uid",
     "ics_filename",
 ]
@@ -69,6 +74,29 @@ def event_uid(booking_id: str, instance_host: str) -> str:
     issues, and changing it later changes every future ``UID`` (``CLAUDE.md`` §10).
     """
     return f"{booking_id}@{instance_host}"
+
+
+def event_for(booking: Booking, intent: BookingIntent, *, instance_host: str) -> CalendarEvent:
+    """The :class:`CalendarEvent` for one committed booking and its intent.
+
+    The one place this translation happens. The ``.ics`` route, the API handoff, and
+    the web form's success page all go through this so they cannot drift on which of
+    the booking's and intent's fields feed the handoff, or on which id the event is
+    keyed by — ``booking.id``, the same id :func:`event_uid` and the booking's own
+    ``ics_uid`` column are minted from (ADR 0004). Bookings do not carry their own
+    location, so ``location`` is always ``None`` here.
+    """
+    return CalendarEvent(
+        booking_id=booking.id,
+        instance_host=instance_host,
+        sequence=booking.ics_sequence or 0,
+        title=intent.subject,
+        description=intent.notes or "",
+        location=None,
+        start_utc=booking.start_utc,
+        end_utc=booking.end_utc,
+        timezone=intent.requester_timezone,
+    )
 
 
 def ics_filename(booking_id: str) -> str:

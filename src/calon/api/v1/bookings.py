@@ -45,7 +45,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from calon.api.deps import AuthorisedOperator, CalendarRegistryDep, DatabaseDep, SettingsDep
-from calon.calendarkit import CalendarEvent, build_deeplinks, build_ics, event_uid, ics_filename
+from calon.calendarkit import build_deeplinks, build_ics, event_for, event_uid, ics_filename
 from calon.clock import utcnow
 from calon.config import Settings
 from calon.intake import native
@@ -194,7 +194,7 @@ def get_calendar_ics(
         if intent is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"no intent for booking {booking_id!r}")
 
-        event = _event_for(row, intent, instance_host=settings.instance_host)
+        event = event_for(row, intent, instance_host=settings.instance_host)
 
         body = build_ics(event, now=utcnow())
 
@@ -204,36 +204,6 @@ def get_calendar_ics(
         content=body,
         media_type="text/calendar; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-def _event_for(booking: Booking, intent: BookingIntent, *, instance_host: str) -> CalendarEvent:
-    """The ``CalendarEvent`` this booking + intent pair maps to.
-
-
-
-    One place to build it, so ``_render`` (which needs the UID and links) and
-
-    ``get_calendar_ics`` (which needs the file bytes) stay consistent. Bookings do not
-
-    carry their own location, so ``location`` is always ``None`` here; the ``.ics`` file
-
-    simply omits the ``LOCATION`` line, which is the correct behaviour for a booking with
-
-    no physical address.
-
-    """
-
-    return CalendarEvent(
-        booking_id=booking.id,
-        instance_host=instance_host,
-        sequence=booking.ics_sequence or 0,
-        title=intent.subject,
-        description=intent.notes or "",
-        location=None,
-        start_utc=booking.start_utc,
-        end_utc=booking.end_utc,
-        timezone=intent.requester_timezone,
     )
 
 
@@ -320,7 +290,7 @@ def _build_handoff(
 
     """
 
-    event = _event_for(booking, intent, instance_host=settings.instance_host)
+    event = event_for(booking, intent, instance_host=settings.instance_host)
 
     links = build_deeplinks(event)
 

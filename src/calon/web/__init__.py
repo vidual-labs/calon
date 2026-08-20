@@ -31,7 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from calon.api.deps import AuthorisedOperator, DatabaseDep, SettingsDep
-from calon.calendarkit import build_deeplinks, event_uid
+from calon.calendarkit import build_deeplinks, event_for, event_uid, ics_filename
 from calon.clock import utcnow
 from calon.config import Settings
 from calon.intake import native
@@ -90,20 +90,8 @@ def _form_context(request: Request) -> dict[str, Any]:
 def _build_handoff_for_form(
     booking: Booking, intent: BookingIntent, settings: Settings
 ) -> CalendarHandoff:
-    """Build the handoff for the success page, using the same logic as api/v1/bookings."""
-    from calon.calendarkit import CalendarEvent, ics_filename
-
-    event = CalendarEvent(
-        booking_id=booking.id,
-        instance_host=settings.instance_host,
-        sequence=booking.ics_sequence or 0,
-        title=intent.subject,
-        description=intent.notes or "",
-        location=None,
-        start_utc=booking.start_utc,
-        end_utc=booking.end_utc,
-        timezone=intent.requester_timezone,
-    )
+    """Build the handoff for the success page, using the same builder as api/v1/bookings."""
+    event = event_for(booking, intent, instance_host=settings.instance_host)
     links = build_deeplinks(event)
     return CalendarHandoff(
         ics_url=f"{settings.base_url}/api/v1/bookings/{booking.id}/calendar.ics",

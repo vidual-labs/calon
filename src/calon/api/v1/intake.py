@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.datastructures import MutableHeaders
 
-from calon.api.deps import CalendarRegistryDep, DatabaseDep, get_source_registry
+from calon.api.deps import CalendarRegistryDep, DatabaseDep, SettingsDep, get_source_registry
 from calon.calendars import CalendarProviderRegistry
 from calon.clock import utcnow
 from calon.db import Database
@@ -63,6 +63,7 @@ async def intake(
     registry: RegistryDep,
     database: DatabaseDep,
     calendar_registry: CalendarRegistryDep,
+    settings: SettingsDep,
 ) -> Any:
     """One endpoint serves every registered source (``docs/external-intake.md``).
 
@@ -122,6 +123,7 @@ async def intake(
         response_headers=response.headers,
         source_slug=source_slug,
         calendar_registry=calendar_registry,
+        instance_host=settings.instance_host,
     )
     # _evaluate_with_write returns either a Submission (fresh) or a BookingResponse
     # (race-path replay). Distinguish by type.
@@ -146,6 +148,7 @@ def _evaluate_with_write(
     response_headers: MutableHeaders,
     source_slug: str,
     calendar_registry: CalendarProviderRegistry,
+    instance_host: str,
 ) -> booking_service.Submission | BookingResponse:
     """Run the evaluation path inside the write transaction.
 
@@ -172,7 +175,7 @@ def _evaluate_with_write(
                 now=now,
                 raw_payload=raw_payload,
                 idempotency_key=idempotency_key,
-                instance_host=source,
+                instance_host=instance_host,
                 calendar_registry=calendar_registry,
             )
         except IntegrityError:
