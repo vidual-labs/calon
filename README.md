@@ -42,7 +42,6 @@ handoff that works with any major calendar.
   or rate plans.
 - ❌ **Not a generic automation platform.** No workflow builder, no trigger/action engine.
 - ❌ **Not an OpenFlow plugin,** and not dependent on OpenFlow or any other lead source.
-- ❌ **Not a calendar sync engine.** calon does not read or write your provider calendars.
 
 calon is deliberately small. If a feature request implies one of the above, it belongs in a
 different tool that talks to calon over its API.
