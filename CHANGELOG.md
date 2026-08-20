@@ -12,6 +12,23 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- _Nothing yet._
+
+### Changed
+
+- _Nothing yet._
+
+### Fixed
+
+- _Nothing yet._
+
+### Security
+
+- _Nothing yet._
+## [0.3.0] - 2026-08-19
+
+### Added
+
 - OpenFlow is now a supported external intake source. A form submission from OpenFlow
   signs its body with a single `X-OpenFlow-Signature` header (HMAC-SHA256), and calon
   authenticates it against the shared secret and an anti-replay window anchored on the
@@ -25,6 +42,17 @@ per user-visible change, describing the effect rather than the implementation.
   that also carries the canonical `X-Calon-*` headers is verified by that scheme
   instead).
 
+- Optional resource calendar sync (Google Calendar and Microsoft 365) is now available,
+  opt-in per resource. A resource whose operator has connected its own calendar now has
+  that calendar's real busy time respected when calon checks availability, and an accepted
+  booking is written back to that calendar so the operator does not copy it in by hand. A
+  resource with no calendar connected behaves exactly as before: conflicts are checked
+  against calon's own bookings only, and the requester still gets the .ics plus deeplinks.
+- A new decision code, `PROVIDER_CONFLICT`, is returned (distinct from `SLOT_CONFLICT`)
+  when a candidate slot overlaps time the resource's connected calendar already has busy,
+  so a requester learns the clash is with the resource's external calendar rather than
+  with another booking. See ADR 0009 and ADR 0013.
+
 ### Changed
 
 - The operator's per-source config now carries an optional `fields` table (the per-form
@@ -32,6 +60,16 @@ per user-visible change, describing the effect rather than the implementation.
   a config that references a `fields` table for a source that does not use one is still
   accepted and simply ignored.
 
+- The provider's free/busy read and the booking write-back are now real network calls (a
+  Google Calendar free/busy query, or a Microsoft Graph `getFreeBusy` query; a real event
+  upsert), both behind a `CalendarProvider` interface and both degrading to Calon-only
+  availability when the provider is unreachable — an unreachable calendar makes a slot less
+  accurate, it does not take booking down.
+- `config/calon.toml` now accepts a `[calendars.<resource_slug>]` block (provider,
+  `calendar_id`, `refresh_token`, `enabled`) to opt a resource into calendar sync; the
+  refresh token is supplied out-of-band (no OAuth is performed inside calon).
+- ADR 0013 records the "minimal HTTP client + token storage" decisions and supersedes the
+  open note in ADR 0009.
 ### Fixed
 
 - _Nothing yet._

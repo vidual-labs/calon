@@ -99,7 +99,8 @@ An ordered enum. The rule chain evaluates in exactly this order.
 | 8 | `BLACKOUT_PERIOD` | Overlaps a blackout |
 | 9 | `DAILY_LIMIT_REACHED` | `max_bookings_per_day` already met |
 | 10 | `SLOT_CONFLICT` | Overlaps an existing booking's buffered span |
-| 11 | `ACCEPTED` | Passed every rule |
+| 11 | `PROVIDER_CONFLICT` | Overlaps busy time on the resource's connected (provider) calendar |
+| 12 | `ACCEPTED` | Passed every rule |
 
 **Once shipped, these strings are public API.** They are never renamed, never repurposed,
 and never have their meaning changed. A new constraint gets a new code.
@@ -108,13 +109,27 @@ The first three are **gating**: evaluation stops at the first of them, and the d
 carries that one violation alone. A request with a negative duration, or one naming a
 resource that does not exist, is structurally unusable, and running the remaining rules
 against it would report confident nonsense — a backwards booking would also be accused of
-ending outside business hours. Codes 4 through 10 are all evaluated, and all their failures
+ending outside business hours. Codes 4 through 11 are all evaluated, and all their failures
 are reported.
 
 Gating rejections also carry no suggestions: there is no "next available" for a question
 that could not be asked.
 
+### `FreeBusySpan`
+
+One busy interval reported by a connected calendar provider for a resource
+(ADR 0009). A frozen value object with `starts_at_utc`, `ends_at_utc`, and an
+optional `reason`.
+
+The rule chain treats a provider-reported busy span **exactly like an own-booking
+span** for conflict purposes — the only difference is the code it rejects with:
+`PROVIDER_CONFLICT` rather than `SLOT_CONFLICT`, so a requester learns the clash
+is with the resource's existing external calendar, not with another booking calon
+made. The span is **not** buffered: buffers are a property of calon-authored
+bookings, and a provider event is not a booking calon made.
+
 ### `SlotSuggestion`
+
 
 `{start, end, timezone}`. The search walks the `slot_granularity_min` grid forward from
 `max(now + min_notice, requested_start)` and returns the first **three** candidates that
