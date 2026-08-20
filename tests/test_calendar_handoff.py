@@ -85,6 +85,12 @@ def test_ics_round_trips_through_an_icalendar_parser() -> None:
     # icalendar terminates the file with a final CRLF after END:VCALENDAR (valid RFC 5545).
     assert raw.rstrip(b"\r\n").endswith(b"END:VCALENDAR")
 
+    # Regression: the property used to be emitted as "SEQ:", which RFC 5545 does not
+    # register — clients ignore it, so "stable UID, incrementing SEQUENCE" (the
+    # mechanism a re-download updates an entry in place) was never actually shipped.
+    assert b"SEQUENCE:0" in raw
+    assert b"\r\nSEQ:" not in raw
+
     calendar = Calendar.from_ical(raw)
     assert calendar["METHOD"] == "PUBLISH"
 
@@ -94,9 +100,9 @@ def test_ics_round_trips_through_an_icalendar_parser() -> None:
     # that only reads the contract fields, treat the parsed component as ``Any``.
     event: Any = events[0]
 
-    # The stable identity and shape. (``SEQ`` is the RFC 5545 spelling icalendar uses.)
+    # The stable identity and shape.
     assert str(event["UID"]) == EXPECTED_UID
-    assert int(event["SEQ"]) == 0
+    assert int(event["SEQUENCE"]) == 0
     assert str(event["STATUS"]) == "CONFIRMED"
     assert str(event["SUMMARY"]) == EVENT.title
     assert str(event["DESCRIPTION"]) == EVENT.description

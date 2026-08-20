@@ -45,6 +45,10 @@ per user-visible change, describing the effect rather than the implementation.
   calendar for conflicts and never wrote accepted bookings back to it, unlike
   the booking API — a resource with calendar sync configured could be double
   booked through its own booking page.
+- The `.ics` calendar file emitted its revision as `SEQ`, a property RFC 5545
+  does not register, instead of `SEQUENCE`. Calendar clients ignored the value,
+  so a re-download of an amended booking was not guaranteed to update the
+  existing calendar entry in place.
 
 ### Security
 

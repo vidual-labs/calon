@@ -82,7 +82,7 @@ def render(event: CalendarEvent, *, now: datetime) -> bytes:
     # CONFIRMED rather than TENTATIVE: the requester holds a slot that passed the whole
     # rule chain, and calon has no RSVP surface to answer with.
     vevent.add("status", "CONFIRMED")
-    vevent.add("seq", event.sequence)
+    vevent.add("sequence", event.sequence)
 
     vcalendar.add_component(vevent)
     # ``to_ical`` is untyped in icalendar (returns ``Any``); the bytes it actually emits.
