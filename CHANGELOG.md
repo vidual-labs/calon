@@ -20,7 +20,20 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Fixed
 
-- _Nothing yet._
+- An OpenFlow form's start/end answer with no UTC offset (the common case for a
+  form's own date/time fields) was interpreted in the server process's local
+  timezone instead of the form's configured one, which could book the wrong hour
+  depending on the host's `TZ`.
+- An OpenFlow submission whose payload `timestamp` had no UTC offset caused the
+  intake endpoint to answer `500` instead of accepting the request.
+- Enabling more than one external intake source, with OpenFlow among them, could
+  build the OpenFlow adapter from a different source's secret and field mapping
+  (or fail to boot claiming OpenFlow has no field mapping when it does), depending
+  on the order sources were listed in `config/calon.toml`.
+- Logging out of the operator panel revoked the session on the server but never
+  cleared the browser's session cookie.
+- Timestamps on the operator dashboard were rendered as malformed, unparseable
+  ISO 8601 strings (a doubled UTC suffix).
 
 ### Security
 

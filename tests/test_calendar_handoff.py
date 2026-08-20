@@ -302,3 +302,38 @@ def test_logout_ends_the_session(operator_client: TestClient) -> None:
 
     operator_client.post("/logout")
     assert operator_client.get("/bookings").status_code == 401
+
+
+def test_logout_clears_the_session_cookie(operator_client: TestClient) -> None:
+    # Regression: logout built its cookie-deletion on an injected ``Response``
+    # object that was never the one actually returned, so the deletion never
+    # reached the client — the browser kept a (server-revoked, so harmless, but
+    # stale) session cookie forever. Don't follow the redirect, so the logout
+    # response's own Set-Cookie is inspectable.
+    _log_in(operator_client, "op-key-123")
+    response = operator_client.post("/logout", follow_redirects=False)
+    assert response.status_code == 303
+    set_cookie = response.headers.get("set-cookie", "")
+    assert "calon_session" in set_cookie
+    # A deletion cookie carries an empty value and an immediately-past expiry.
+    assert 'calon_session=""' in set_cookie or "calon_session=;" in set_cookie
+
+
+def test_the_dashboard_renders_well_formed_iso_8601_timestamps(
+    operator_client: TestClient,
+) -> None:
+    # Regression: the dashboard appended a literal "Z" to a timestamp that was
+    # already offset-aware (UtcDateTime round-trips as tz-aware), producing an
+    # unparseable "+00:00Z" suffix for every row.
+    _make_a_booking(operator_client)
+    _log_in(operator_client, "op-key-123")
+
+    with operator_client.app.state.db.read() as session:  # type: ignore[attr-defined]
+        from calon.models import BookingIntent
+
+        intent = session.query(BookingIntent).one()
+        received_at = intent.received_at_utc.isoformat()
+
+    html = operator_client.get("/bookings").text
+    assert received_at in html
+    assert f"{received_at}Z" not in html

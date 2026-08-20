@@ -318,15 +318,20 @@ async def login_submit(request: Request, settings: SettingsDep) -> Response:
 
 
 @router.post("/logout", name="logout")
-def logout(request: Request, response: Response) -> Response:
+def logout(request: Request) -> Response:
     """End the current session and redirect to the login form."""
     store = request.app.state.login_store
     if store is not None:
         cookie = request.cookies.get(SESSION_COOKIE)
         if cookie:
             store.end_session(cookie)
+    # Build the redirect, then delete the cookie on *that* response — an injected
+    # ``response`` parameter here would be a different object from the one FastAPI
+    # actually sends, so the deletion would be silently dropped (the same mistake
+    # ``login_submit`` above avoids by attaching its cookie to its own redirect).
+    response = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(SESSION_COOKIE)
-    return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -416,16 +421,18 @@ def _load_intents(session: Session, *, limit: int = 50) -> list[dict[str, object
         result.append(
             {
                 "id": intent.id,
-                "received_at": (intent.received_at_utc.isoformat() + "Z")
-                if hasattr(intent, "received_at_utc") and intent.received_at_utc
-                else None,
+                # ``received_at_utc`` already comes back tz-aware (UtcDateTime
+                # reattaches UTC on read), so ``isoformat()`` already carries the
+                # offset; appending "Z" on top produced a malformed
+                # "+00:00Z" suffix.
+                "received_at": (
+                    intent.received_at_utc.isoformat() if intent.received_at_utc else None
+                ),
                 "requester_name": intent.requester_name,
                 "subject": intent.subject,
                 "status": booking.status if booking else None,
                 "booking_id": booking.id if booking else None,
-                "start": (booking.start_utc.isoformat() + "Z")
-                if booking and booking.start_utc
-                else None,
+                "start": booking.start_utc.isoformat() if booking and booking.start_utc else None,
                 "ics_url": f"/api/v1/bookings/{booking.id}/calendar.ics" if booking else None,
             }
         )

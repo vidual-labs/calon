@@ -205,6 +205,7 @@ class SourceRegistry:
             )
         adapters: dict[str, HmacSourceAdapter | SourceAdapter] = {}
         for slug in sorted(resolved, reverse=True):
+            cfg = enabled[slug]
             module_name = f"{package.__name__}.{slug}"
             module = sys.modules.get(module_name)
             if module is None:
