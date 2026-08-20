@@ -19,9 +19,11 @@ owner, e.g. a UPN or mail-alias) whose calendar is synced — the Graph API addr
 calendar data as ``/users/{user}/``. There is no separate calendar id in the common
 case (the mailbox's default calendar).
 
-Free/busy: ``POST /users/{user}/calendar/getFreeBusy`` scoped to the requested UTC
-window; the response's ``busy`` list is the source of truth (``available``/``tentative``
-are intentionally ignored — only definite busy time reduces Calon availability).
+Free/busy: ``POST /users/{user}/calendar/getSchedule`` scoped to the requested UTC
+window (Graph v1.0 has no ``getFreeBusy`` action on this path); a ``scheduleItems``
+entry counts only when its ``status`` is exactly ``"busy"`` — ``free``, ``tentative``,
+``oof``, and ``workingElsewhere`` are intentionally ignored, since only a definite
+conflict should narrow what calon offers.
 
 Upsert: Microsoft Graph does **not** allow a caller-chosen event id, so
 ``upsert_event`` is a *re-runnable by UID* flow: it first locates an existing event
@@ -167,27 +169,35 @@ class MicrosoftGraphProvider:
     ) -> tuple[FreeBusySpan, ...]:
         """Fetch provider busy spans overlapping the window (ADR 0009).
 
-        ``POST /users/{user}/calendar/getFreeBusy`` scoped to this resource's mailbox.
-        Only definite ``busy`` time reduces availability; ``available``/``tentative``
-        are ignored on purpose. A provider that reports no busy time returns an empty
-        tuple; an unreachable / dead provider raises :class:`CalendarProviderError`
-        (the caller degrades to Calon-only data).
+        ``POST /users/{user}/calendar/getSchedule`` scoped to this resource's mailbox
+        (Graph v1.0 has no ``getFreeBusy`` action on this path — ``getSchedule`` is the
+        real one). Only a ``scheduleItems`` entry whose ``status`` is exactly
+        ``"busy"`` reduces availability; ``free``, ``tentative``, ``oof``, and
+        ``workingElsewhere`` are ignored on purpose — only a definite conflict should
+        narrow what calon offers. The request is always made in the ``UTC`` zone (a
+        valid identifier Graph accepts directly, unlike the Windows zone names it
+        otherwise uses), so the response's ``start``/``end`` are read as UTC too. A
+        provider that reports no busy time returns an empty tuple; an unreachable /
+        dead provider raises :class:`CalendarProviderError` (the caller degrades to
+        Calon-only data).
         """
         body = {
-            "startDateTime": _rfc3339(window_start_utc),
-            "endDateTime": _rfc3339(window_end_utc),
-            "includeOnlineMeetings": False,
+            "schedules": [self.user],
+            "startTime": {"dateTime": _naive_rfc3339(window_start_utc), "timeZone": "UTC"},
+            "endTime": {"dateTime": _naive_rfc3339(window_end_utc), "timeZone": "UTC"},
         }
         response = self._request(
-            "POST", f"{_GRAPH_BASE}/users/{self.user}/calendar/getFreeBusy", json_body=body
+            "POST", f"{_GRAPH_BASE}/users/{self.user}/calendar/getSchedule", json_body=body
         )
         data = response.json() if response.content else {}
-        busy_list = ((data.get("responses") or [{}])[0].get("busy")) or []
+        schedules = data.get("value") or []
+        items = schedules[0].get("scheduleItems") if schedules else []
         spans: list[FreeBusySpan] = []
-        for entry in busy_list:
-            if not (isinstance(entry, list) and len(entry) >= 2):
+        for item in items or []:
+            if not isinstance(item, dict) or item.get("status") != "busy":
                 continue
-            start, end = entry[0], entry[1]
+            start = (item.get("start") or {}).get("dateTime")
+            end = (item.get("end") or {}).get("dateTime")
             if not start or not end:
                 continue
             spans.append(
@@ -211,8 +221,10 @@ class MicrosoftGraphProvider:
         payload: dict[str, Any] = {
             "subject": event.summary,
             "iCalUID": event.uid,
-            "start": {"dateTime": _rfc3339(event.starts_at_utc)},
-            "end": {"dateTime": _rfc3339(event.ends_at_utc)},
+            # Graph's dateTimeTimeZone shape requires both keys; a "dateTime" with no
+            # "timeZone" is a malformed event, not an implicit-UTC shorthand.
+            "start": {"dateTime": _naive_rfc3339(event.starts_at_utc), "timeZone": "UTC"},
+            "end": {"dateTime": _naive_rfc3339(event.ends_at_utc), "timeZone": "UTC"},
         }
         if event.description:
             payload["body"] = {"contentType": "text", "content": event.description}
@@ -250,6 +262,16 @@ class MicrosoftGraphProvider:
 def _rfc3339(moment: datetime) -> str:
     """Render an aware datetime as an ISO 8601 instant with a ``Z`` suffix."""
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _naive_rfc3339(moment: datetime) -> str:
+    """Render an aware datetime as the naive local string Graph's ``dateTimeTimeZone``
+    shape wants — no offset, no ``Z``, paired with an explicit ``timeZone`` key.
+
+    Every caller here always requests/sends ``"UTC"`` as that ``timeZone``, so the
+    instant is first normalised to UTC before the offset is dropped.
+    """
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _parse_rfc3339(text: str) -> datetime:

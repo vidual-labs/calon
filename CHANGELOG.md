@@ -77,6 +77,14 @@ per user-visible change, describing the effect rather than the implementation.
   exception message for the substring `"404"`, which could misfire when the
   request URL happened to contain those digits. It now checks the response's
   actual HTTP status.
+- Microsoft 365 free/busy checking called `getFreeBusy`, an action Graph v1.0
+  does not have on that path, so it always failed and every resource with a
+  connected Microsoft calendar degraded to calon-only availability. It now
+  calls the real `getSchedule` action, and only a definite `busy` conflict
+  narrows availability.
+- A Microsoft 365 calendar write-back's event create/update request omitted
+  the required `timeZone` alongside `dateTime`, which Graph rejects as a
+  malformed event.
 
 ### Security
 
