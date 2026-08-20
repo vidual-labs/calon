@@ -13,7 +13,10 @@ payload and become a :class:`calon.schemas.BookingIntentIn`.
 
 from __future__ import annotations
 
-from datetime import datetime
+import importlib
+import json
+import sys
+from datetime import datetime, timedelta
 from types import ModuleType
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
@@ -106,8 +109,6 @@ class HmacSourceAdapter:
         ``now`` is always supplied explicitly by the route; a caller here that reads the
         wall clock would be exactly the wall-clock leak ``CLAUDE.md`` §4.1 forbids.
         """
-        from datetime import timedelta
-
         verify_signature(
             request.headers,
             request.raw_body,
@@ -117,8 +118,6 @@ class HmacSourceAdapter:
         )
 
     def parse(self, request: IntakeRequest) -> BookingIntentIn:
-        import json
-
         try:
             payload = json.loads(request.raw_body)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -189,10 +188,6 @@ class SourceRegistry:
         real (empty) modules bound to it. No real file under ``src/calon/intake/
         external/`` is required for any test to enable a source end-to-end.
         """
-        import importlib
-        import sys
-        from datetime import timedelta
-
         resolved: dict[str, SignatureSourceConfig] = {}
         enabled = {slug: cfg for slug, cfg in source_configs.items() if cfg.enabled}
         for slug, cfg in enabled.items():
@@ -254,11 +249,6 @@ def _adapter_for(module: ModuleType, slug: str) -> HmacSourceAdapter | SourceAda
         raise RuntimeError(
             f"module {module.__name__!r} exposes no adapter for slug {slug!r}; "
             f"it must define one under the slug name or as 'adapter'"
-        )
-    if adapter is None:
-        raise RuntimeError(  # pragma: no cover - unreachable once the config exists
-            f"source {slug!r} is enabled without an adapter object; "
-            f"register it under the module's slug name before enabling it"
         )
     if not isinstance(adapter, SourceAdapter) or getattr(adapter, "slug", None) != slug:
         raise RuntimeError(

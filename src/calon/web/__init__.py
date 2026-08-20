@@ -16,6 +16,7 @@ Routes:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Mapping
 from datetime import datetime
@@ -37,7 +38,7 @@ from calon.clock import utcnow
 from calon.config import Settings
 from calon.intake import native
 from calon.models import Booking, BookingIntent
-from calon.schemas import CalendarHandoff, CalendarLinksOut
+from calon.schemas import BookingIntentIn, CalendarHandoff, CalendarLinksOut, RequesterIn
 from calon.security import SESSION_COOKIE
 from calon.services import booking_service
 
@@ -175,8 +176,6 @@ async def book_form_post(
         )
 
     # --- build the canonical intent ---
-    from calon.schemas import BookingIntentIn, RequesterIn
-
     try:
         intent_in = BookingIntentIn(
             resource_slug=request.app.state.config.resource.slug,
@@ -381,8 +380,6 @@ async def _extract_login(request: Request) -> str:
     """
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
-        import json
-
         data = await request.body()
         payload = json.loads(data.decode("utf-8")) if data else {}
         return str(payload.get("login", ""))

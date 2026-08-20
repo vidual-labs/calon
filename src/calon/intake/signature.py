@@ -21,7 +21,6 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 __all__ = [
     "DEFAULT_TIMESTAMP_WINDOW",
@@ -31,11 +30,8 @@ __all__ = [
     "TIMESTAMP_HEADER",
     "IntakeAuthError",
     "IntakeError",
-    "IntakeIntegrityError",
     "IntakeParseError",
     "SourceConfig",
-    "SourceContext",
-    "SourceSpec",
     "compute_signature",
     "generate_secret",
     "resolve_idempotency_key",
@@ -66,10 +62,6 @@ class IntakeParseError(IntakeError):
     """The payload did not map to the canonical booking intent. Maps to ``HTTP 400 Bad Request``."""
 
 
-class IntakeIntegrityError(IntakeError):
-    """An integrity check inside the intake route failed (e.g. idempotency race). Maps to 500."""
-
-
 @dataclass(frozen=True, slots=True)
 class SourceConfig:
     """One configured external source, read from ``config/calon.toml``.
@@ -85,29 +77,6 @@ class SourceConfig:
     resource_slug: str = "default"
     timestamp_window: timedelta = field(default=DEFAULT_TIMESTAMP_WINDOW)
     enabled: bool = True
-
-
-@dataclass(frozen=True, slots=True)
-class SourceSpec:
-    """A source in its resolved form: config plus the adapter bound to it.
-
-    The adapter is a protocol (see :mod:`calon.intake.registry`); the spec is what the
-    ``/intake/{source_slug}`` route pulls out of the registry and passes to
-    ``verify`` and ``parse``.
-    """
-
-    slug: str
-    adapter: Any  # SourceAdapter (typed at the registry level; Any here to keep this module pure)
-    config: SourceConfig
-
-
-@dataclass(frozen=True, slots=True)
-class SourceContext:
-    """Per-request source context: the spec plus the raw request, for the route to verify/parse."""
-
-    spec: SourceSpec
-    headers: Mapping[str, str]
-    body: bytes
 
 
 def compute_signature(secret: str, timestamp: str, body: bytes) -> str:

@@ -205,8 +205,6 @@ class OpenFlowAdapter:
         timestamp_header = _hget(request.headers, TIMESTAMP_HEADER)
         if timestamp_header is not None:
             # The standard scheme takes over; the shim is not consulted.
-            from datetime import timedelta
-
             verify_signature(
                 request.headers,
                 request.raw_body,

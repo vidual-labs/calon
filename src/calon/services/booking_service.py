@@ -189,6 +189,18 @@ def submit_intent(
             # Re-judging rather than synthesising a rejection keeps every decision the
             # domain's to make.
             decision = judge()
+            if decision.accepted:
+                # has_conflict() and the rule chain's own conflict check now disagree
+                # about the same span in the same transaction — a genuine invariant
+                # violation, not a request that can be resolved either way. Raising
+                # here (rather than writing a "rejected" intent whose decision_code
+                # reads ACCEPTED) keeps the audit trail from recording a decision
+                # that contradicts itself.
+                raise RuntimeError(
+                    "has_conflict() reported a conflict but the re-judged decision "
+                    "still accepted the same span; the conflict check and the rule "
+                    "chain's own overlap test have drifted apart"
+                )
         else:
             booking = _write_booking(
                 session,

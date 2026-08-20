@@ -201,13 +201,15 @@ class CalendarProviderRegistry:
             return ()
 
     def upsert_event(self, resource_slug: str, event: CalendarEvent) -> None:
-        """Write a booking event to the provider, degrading to a warning on failure.
+        """Write a booking event to the provider.
 
-        This is the post-commit write-back: the booking has already been accepted inside
-        the write transaction when this runs, so a provider failure must not, and does
-        not, roll it back. The failure is surfaced through :class:`CalendarProviderError`
-        so the caller can append an audit record; the caller never re-raises this method's
-        exceptions. Resources with no configured provider are a silent no-op.
+        Unlike :meth:`free_busy`, this method does **not** catch
+        :class:`CalendarProviderError` itself — it propagates. This is the post-commit
+        write-back: the booking has already been accepted inside the write transaction
+        when this runs, so a provider failure must not, and does not, roll it back; the
+        caller (``perform_write_back``) is the one that catches the error, degrades,
+        and appends the audit record — it never lets this method's exception escape
+        further. Resources with no configured provider are a silent no-op.
         """
         provider = self._providers.get(resource_slug)
         if provider is None:

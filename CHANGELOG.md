@@ -85,6 +85,9 @@ per user-visible change, describing the effect rather than the implementation.
 - A Microsoft 365 calendar write-back's event create/update request omitted
   the required `timeZone` alongside `dateTime`, which Graph rejects as a
   malformed event.
+- The operator login's session table never dropped an expired session's own
+  record (only ever treating it as invalid), so a long-running instance's
+  memory usage grew by one entry per login for its entire uptime.
 
 ### Security
 

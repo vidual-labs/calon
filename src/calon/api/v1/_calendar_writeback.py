@@ -28,7 +28,7 @@ from calon.calendars import CalendarEvent as CalendarProviderEvent
 from calon.calendars import CalendarProviderError, CalendarProviderRegistry
 from calon.db import Database
 from calon.models import BookingIntent, ResourceRow
-from calon.services import booking_service
+from calon.services import booking_service, repository
 
 __all__ = ["perform_write_back", "resolve_resource_slug"]
 
@@ -103,8 +103,6 @@ def perform_write_back(
 
     # Audit the write-back outcome in its own short write session.
     with database.write() as session:
-        from calon.services import repository
-
         repository.append_audit(
             session,
             at=now,

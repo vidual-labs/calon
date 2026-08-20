@@ -45,31 +45,30 @@ import httpx
 
 from calon.calendars import (
     CalendarEvent,
-    CalendarProviderError,
     FreeBusySpan,
 )
 from calon.calendars.oauth import (
     OAuthCredentials,
-    TokenStore,
-    calendar_error,
-    refresh_access_token,
+    ProviderTransport,
 )
 
-_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 _GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-_ERROR_PROVIDER = "microsoft"
 _ONE_DAY = timedelta(days=1)
 
 
-class MicrosoftGraphProvider:
+class MicrosoftGraphProvider(ProviderTransport):
     """Microsoft Graph adapter implementing :class:`CalendarProvider` (ADR 0009).
 
     See the module docstring for the refresh-and-retry discipline and the re-runnable
     by-UID upsert design. A ``client`` may be injected for tests (typically wrapping
     ``httpx.MockTransport``); when none is given the provider owns and closes its own.
+    The transport (client lifecycle, refresh-and-retry) is :class:`ProviderTransport`;
+    this class owns only the endpoints and payload shapes that are Graph's own.
     """
 
     name = "microsoft"
+    provider_name = "microsoft"
+    token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 
     def __init__(
         self,
@@ -80,86 +79,10 @@ class MicrosoftGraphProvider:
         credentials: OAuthCredentials | None = None,
         client: httpx.Client | None = None,
     ) -> None:
+        super().__init__(refresh_token=refresh_token, credentials=credentials, client=client)
         self.resource_slug = resource_slug
         # For the Graph API the per-resource handle is the mailbox *user*.
         self.user = calendar_id
-        self._credentials = credentials or OAuthCredentials()
-        self._store = TokenStore(refresh_token=refresh_token)
-        self._client = client
-        self._owns_client = client is None
-
-    def _client_instance(self) -> httpx.Client:
-        if self._client is None:
-            self._client = httpx.Client(timeout=10.0)
-            self._owns_client = True
-        return self._client
-
-    def close(self) -> None:
-        """Close the provider's own HTTP client (a no-op if one was injected)."""
-        if self._client is not None and self._owns_client:
-            self._client.close()
-            self._client = None
-
-    def _refresh(self) -> None:
-        """Refresh the access token once, or raise if the grant cannot be refreshed."""
-        try:
-            access, expires_in, refresh = refresh_access_token(
-                self._client_instance(),
-                token_url=_TOKEN_URL,
-                credentials=self._credentials,
-                refresh_token=self._store.refresh_token,
-            )
-        except CalendarProviderError:
-            raise
-        self._store.adopt(access, expires_in, refresh)
-
-    def _request(
-        self,
-        method: str,
-        url: str,
-        *,
-        params: dict[str, str] | None = None,
-        json_body: dict[str, Any] | None = None,
-    ) -> httpx.Response:
-        """Send one HTTP request, refreshing the token once on a ``401`` and retrying.
-
-        The first failure after a refresh re-raises the :class:`CalendarProviderError` as
-        a dead grant; the caller (free_busy / upsert_event) lets it propagate, and the
-        registry degrades. A transport error is wrapped the same way.
-        """
-        if not self._store.is_fresh():
-            self._refresh()
-        headers = {"Authorization": f"Bearer {self._store.access_token}"}
-        client = self._client_instance()
-        try:
-            response = client.request(method, url, params=params, json=json_body, headers=headers)
-        except httpx.HTTPError as exc:
-            raise calendar_error(
-                _ERROR_PROVIDER, f"transport error ({type(exc).__name__})"
-            ) from exc
-        if response.status_code == 401:
-            # One and only refresh-and-retry: a dead grant must not loop forever.
-            self._refresh()
-            headers = {"Authorization": f"Bearer {self._store.access_token}"}
-            try:
-                response = client.request(
-                    method, url, params=params, json=json_body, headers=headers
-                )
-            except httpx.HTTPError as exc:
-                raise calendar_error(
-                    _ERROR_PROVIDER, f"transport error after refresh ({type(exc).__name__})"
-                ) from exc
-            if response.status_code == 401:
-                raise calendar_error(
-                    _ERROR_PROVIDER, "refreshed token still rejected (401); grant is dead"
-                )
-        if response.status_code >= 400:
-            raise calendar_error(
-                _ERROR_PROVIDER,
-                f"{method} {url} returned {response.status_code}",
-                status_code=response.status_code,
-            )
-        return response
 
     def free_busy(
         self,
