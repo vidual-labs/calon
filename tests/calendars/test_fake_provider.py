@@ -19,14 +19,12 @@ from calon.domain import FreeBusySpan
 TUESDAY = 2026, 1, 6  # a real Tuesday
 
 
-def at(*parts: int) -> datetime:
-    """A 2026 instant in UTC, built the same way as the domain tests."""
-    year, month, day = parts[0:3]
-    hour, minute = (parts[3], parts[4]) if len(parts) >= 5 else (10, 0)
-    return datetime(year, month, day, hour, minute, tzinfo=UTC)
+def at(hour: int, minute: int = 0) -> datetime:
+    """A 2026 instant in UTC at the given hour/minute, built the same way as the domain tests."""
+    return datetime(*TUESDAY, hour, minute, tzinfo=UTC)
 
 
-class FreeBusyContract:
+class TestFreeBusyContract:
     def test_an_empty_calendar_returns_no_spans(self):
         provider = FakeCalendar()
         assert provider.free_busy("default", at(10, 0), at(11, 0)) == ()
@@ -66,7 +64,7 @@ class FreeBusyContract:
         assert provider.free_busy("default", at(10, 0), at(11, 0)) == ()
 
 
-class UpsertContract:
+class TestUpsertContract:
     def _event(self, uid: str = "abc", summary: str = "Consultation with Ada") -> CalendarEvent:
         return CalendarEvent(
             uid=uid,
@@ -112,7 +110,7 @@ class UpsertContract:
             )
 
 
-class ProviderContract:
+class TestProviderContract:
     def test_fake_calendar_is_a_calendar_provider(self):
         assert isinstance(FakeCalendar(), CalendarProvider)
 

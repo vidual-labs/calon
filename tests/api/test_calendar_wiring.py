@@ -58,7 +58,8 @@ def _install_provider(
     whole registry (rather than mutating the boot-built one) keeps the change scoped and
     the boot-built registry untouched for other assertions.
     """
-    client.app.state.calendar_registry = CalendarProviderRegistry({resource_slug: provider})
+    registry = CalendarProviderRegistry({resource_slug: provider})
+    client.app.state.calendar_registry = registry  # type: ignore[attr-defined]
 
 
 def _audit_types(client: TestClient, database: Database) -> list[str]:
@@ -137,6 +138,7 @@ def test_an_accepted_booking_is_written_back_and_audited(
         booking = session.scalars(select(Booking)).one()
 
     # The event landed in the provider, keyed by the booking's iCal UID.
+    assert booking.ics_uid is not None
     synced = provider.event("default", booking.ics_uid)
     assert synced is not None
     assert synced.uid == booking.ics_uid
@@ -178,7 +180,8 @@ def test_a_resource_with_no_provider_is_a_silent_no_op(
 ) -> None:
     # No provider is installed on the live app (the boot-built registry is empty by
     # default), so the write-back must be a silent no-op.
-    assert client.app.state.calendar_registry.provider_for("default") is None
+    registry = client.app.state.calendar_registry  # type: ignore[attr-defined]
+    assert registry.provider_for("default") is None
 
     response = client.post("/api/v1/bookings", json=booking_payload(TOMORROW_10_00, TOMORROW_10_30))
 
