@@ -32,6 +32,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -324,6 +325,15 @@ class TestShimVerify:
         request = IntakeRequest(source_slug="openflow", raw_body=body, headers=_shim_headers(body))
         adapter.verify(request, now=SIM_NOW)  # must not raise
 
+    def test_a_naive_payload_timestamp_does_not_crash_verify(self) -> None:
+        # Regression: comparing ``now - ts`` when ``ts`` parsed as naive (no offset,
+        # and no "Z" for the ``.replace`` to turn into one) raised TypeError, which
+        # no caller catches — the route answered 500 to an authenticated source
+        # instead of treating the ambiguous clock the same as an unparseable one.
+        adapter = _adapter()
+        naive = "2026-09-01T05:00:00"  # no offset, no trailing Z
+        adapter.verify(_signed_shim_request(timestamp=naive), now=SIM_NOW)  # must not raise
+
     def test_canonical_headers_take_precedence_over_the_shim(self) -> None:
         # A request carrying BOTH schemes verifies through the canonical path: the
         # canonical signature is computed over "<ts>.<body>", so a correct canonical
@@ -528,6 +538,26 @@ class TestParseEdgeCases:
         )
         with pytest.raises(IntakeParseError):
             adapter.parse(_signed_shim_request())
+
+    def test_a_naive_start_answer_is_interpreted_in_the_forms_own_zone(self) -> None:
+        # Regression: the adapter used to convert a naive start answer with
+        # ``.astimezone(tz)``, which reinterprets a naive value from the *server
+        # process's* local zone rather than the form's declared zone — the same
+        # booking request would land at a different instant depending on the
+        # host's ``TZ``. A naive answer must be read as already being in ``tz``.
+        adapter = _adapter()
+        request = _signed_shim_request(start="2026-09-01T11:00:00")  # no offset
+        intent = adapter.parse(request)
+        assert intent.start == datetime(2026, 9, 1, 11, 0, 0, tzinfo=ZoneInfo(TZ))
+
+    def test_an_offset_start_answer_is_honoured_as_written(self) -> None:
+        # An answer that already carries its own offset is not reinterpreted — only
+        # re-expressed in the form's zone, exactly as the pre-naive-answer behaviour
+        # already worked.
+        adapter = _adapter()
+        request = _signed_shim_request(start="2026-09-01T11:00:00+05:00")
+        intent = adapter.parse(request)
+        assert intent.start == datetime(2026, 9, 1, 11, 0, 0, tzinfo=UTC) + timedelta(hours=-5)
 
     def test_the_payload_timestamp_is_not_required(self) -> None:
         adapter = _adapter()

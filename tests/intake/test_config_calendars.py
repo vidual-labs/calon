@@ -44,6 +44,12 @@ buffer_after_min  = 15
 """
 
 
+#: An enabled provider requires both, since neither can ever refresh an access
+#: token without them (ADR 0013). Appended to test bodies that need a valid,
+#: enabled entry; tests of the requirement itself omit it deliberately.
+CREDS = 'client_id = "cid"\nclient_secret = "csecret"\n'
+
+
 def _load(tmp_path: pathlib.Path, body: str) -> OperatorConfig:
     path = tmp_path / "calon.toml"
     path.write_text(body, encoding="utf-8")
@@ -60,7 +66,7 @@ class TestParsingAndDefaults:
         assert config.calendars == {}
 
     def test_a_google_table_loads_with_minimum_fields(self, tmp_path: pathlib.Path) -> None:
-        body = BASE + '\n[calendars.default]\nprovider = "google"\n'
+        body = BASE + f'\n[calendars.default]\nprovider = "google"\n{CREDS}'
         config = _load(tmp_path, body)
         cal = config.calendars["default"]
         assert isinstance(cal, CalendarProviderConfig)
@@ -69,30 +75,36 @@ class TestParsingAndDefaults:
         assert cal.calendar_id == "primary"
         assert cal.enabled is True
         assert cal.refresh_token == ""
+        assert cal.client_id == "cid"
+        assert cal.client_secret == "csecret"
 
     def test_a_microsoft_table_loads(self, tmp_path: pathlib.Path) -> None:
-        body = BASE + '\n[calendars.default]\nprovider = "microsoft"\n'
+        body = BASE + f'\n[calendars.default]\nprovider = "microsoft"\n{CREDS}'
         assert _load(tmp_path, body).calendars["default"].provider == "microsoft"
 
     def test_a_calendar_can_name_a_specific_calendar_id(self, tmp_path: pathlib.Path) -> None:
         body = BASE + (
-            '\n[calendars.default]\nprovider = "google"\ncalendar_id = "office@example.com."\n'
+            '\n[calendars.default]\nprovider = "google"\n'
+            f'calendar_id = "office@example.com."\n{CREDS}'
         )
         assert _load(tmp_path, body).calendars["default"].calendar_id == "office@example.com."
 
     def test_a_calendar_can_be_disabled(self, tmp_path: pathlib.Path) -> None:
+        # No client_id/client_secret needed: a disabled entry is never asked to refresh.
         body = BASE + '\n[calendars.default]\nprovider = "google"\nenabled = false\n'
         assert _load(tmp_path, body).calendars["default"].enabled is False
 
     def test_a_calendar_can_carry_a_refresh_token(self, tmp_path: pathlib.Path) -> None:
-        body = BASE + ('\n[calendars.default]\nprovider = "google"\nrefresh_token = "tok-123"\n')
+        body = BASE + (
+            f'\n[calendars.default]\nprovider = "google"\nrefresh_token = "tok-123"\n{CREDS}'
+        )
         assert _load(tmp_path, body).calendars["default"].refresh_token == "tok-123"
 
     def test_multiple_resources_each_load(self, tmp_path: pathlib.Path) -> None:
         body = (
             BASE
-            + '\n[calendars.default]\nprovider = "google"\n'
-            + '\n[calendars.second]\nprovider = "microsoft"\n'
+            + f'\n[calendars.default]\nprovider = "google"\n{CREDS}'
+            + f'\n[calendars.second]\nprovider = "microsoft"\n{CREDS}'
         )
         config = _load(tmp_path, body)
         assert set(config.calendars) == {"default", "second"}
@@ -139,6 +151,38 @@ class TestRejections:
                 BASE + '\n[calendars.default]\nprovider = "google"\nrefresh_token = true\n',
             )
 
+    def test_a_non_string_client_id_is_rejected(self, tmp_path: pathlib.Path) -> None:
+        with pytest.raises(ConfigError, match="client_id"):
+            _load(
+                tmp_path,
+                BASE + '\n[calendars.default]\nprovider = "google"\nclient_id = 5\n',
+            )
+
+    def test_a_non_string_client_secret_is_rejected(self, tmp_path: pathlib.Path) -> None:
+        with pytest.raises(ConfigError, match="client_secret"):
+            _load(
+                tmp_path,
+                BASE + '\n[calendars.default]\nprovider = "google"\nclient_secret = 5\n',
+            )
+
+    def test_an_enabled_calendar_with_no_client_credentials_is_rejected(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        # Neither client_id nor client_secret: the provider could never refresh an
+        # access token at all, so this fails the boot rather than syncing nothing
+        # forever without the operator noticing.
+        with pytest.raises(ConfigError, match="client_id and client_secret"):
+            _load(tmp_path, BASE + '\n[calendars.default]\nprovider = "google"\n')
+
+    def test_an_enabled_calendar_with_only_a_client_id_is_rejected(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        with pytest.raises(ConfigError, match="client_id and client_secret"):
+            _load(
+                tmp_path,
+                BASE + '\n[calendars.default]\nprovider = "google"\nclient_id = "cid"\n',
+            )
+
     def test_an_unknown_key_is_rejected_and_names_it(self, tmp_path: pathlib.Path) -> None:
         with pytest.raises(ConfigError, match="bogus"):
             _load(
@@ -157,17 +201,46 @@ class TestRejections:
                 tmp_path,
                 BASE
                 + '\n[calendars.default]\nprovider = "google"\nsloppy = 1\n'
-                + '\n[calendars.undamaged]\nprovider = "microsoft"\n',
+                + f'\n[calendars.undamaged]\nprovider = "microsoft"\n{CREDS}',
             )
 
 
 class TestRegistryIntegration:
     """Config + registry: the two halves of provider wiring do not fight each other."""
 
+    def test_the_configured_client_credentials_reach_the_real_provider(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        # Regression: [calendars.<slug>] had nowhere to put the OAuth app
+        # credentials at all, so every provider was built with the empty default
+        # OAuthCredentials() and could never actually refresh an access token
+        # against the real API. This exercises the real (non-Fake) builder.
+        from calon.calendars.google import GoogleCalendarProvider
+        from calon.calendars.microsoft import MicrosoftGraphProvider
+
+        body = (
+            BASE
+            + f'\n[calendars.g]\nprovider = "google"\n{CREDS}'
+            + '\n[calendars.m]\nprovider = "microsoft"\n'
+            + 'client_id = "m-cid"\nclient_secret = "m-csecret"\n'
+        )
+        config = _load(tmp_path, body)
+        registry = CalendarProviderRegistry.from_config(config.calendars)
+
+        google = registry.provider_for("g")
+        assert isinstance(google, GoogleCalendarProvider)
+        assert google._credentials.client_id == "cid"
+        assert google._credentials.client_secret == "csecret"
+
+        microsoft = registry.provider_for("m")
+        assert isinstance(microsoft, MicrosoftGraphProvider)
+        assert microsoft._credentials.client_id == "m-cid"
+        assert microsoft._credentials.client_secret == "m-csecret"
+
     def test_disabled_calendars_do_not_reach_the_registry(self, tmp_path: pathlib.Path) -> None:
         body = (
             BASE
-            + '\n[calendars.g]\nprovider = "google"\n'
+            + f'\n[calendars.g]\nprovider = "google"\n{CREDS}'
             + '\n[calendars.m]\nprovider = "microsoft"\nenabled = false\n'
         )
         config = _load(tmp_path, body)
@@ -184,7 +257,7 @@ class TestRegistryIntegration:
     ) -> None:
         # The parser lets any known provider name through; the registry refuses to build
         # one it has no adapter module for, so the operator finds the gap at boot.
-        body = BASE + '\n[calendars.default]\nprovider = "google"\n'
+        body = BASE + f'\n[calendars.default]\nprovider = "google"\n{CREDS}'
         config = _load(tmp_path, body)
         with pytest.raises(RuntimeError, match="no adapter module"):
             CalendarProviderRegistry.from_config(

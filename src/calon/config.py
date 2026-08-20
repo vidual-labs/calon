@@ -259,9 +259,22 @@ class CalendarProviderConfig:
     later re-enable (mirroring :class:`SourceConfig.enabled`).
 
     ``refresh_token`` is optional and operator-facing: it seeds the provider's token
-    store on first boot so a connection can be established without an interactive OAuth
-    round-trip. Once the provider has refreshed once, the stored refresh token (not this
-    file value) is authoritative and the file's value is ignored.
+    store on boot so a connection can be established without an interactive OAuth
+    round-trip. Once the provider has refreshed once, the in-memory rotated refresh
+    token (not this file value) is used for the rest of *that process's* run — but
+    it is held only in memory (ADR 0013: no credential store), so a restart discards
+    it and reads this file's value again. A provider that rotates its refresh token
+    on every use (as Google's may) can therefore go stale across a restart; if that
+    happens, re-run the out-of-band OAuth exchange and update this value.
+
+    ``client_id``/``client_secret`` are the OAuth app credentials from the provider's
+    developer console (a Google Cloud OAuth client, or an Azure AD app registration) —
+    distinct from ``refresh_token``, which is the per-resource grant. Both are required
+    for the provider to refresh its access token at all (ADR 0013's
+    :class:`calon.calendars.oauth.OAuthCredentials`); left blank, every refresh is
+    rejected by the provider and the resource silently degrades to Calon-only
+    availability (CLAUDE.md §2 — never a refused booking, but also never a working
+    sync until these are set).
     """
 
     slug: str
@@ -269,6 +282,8 @@ class CalendarProviderConfig:
     calendar_id: str = "primary"
     enabled: bool = True
     refresh_token: str = ""
+    client_id: str = ""
+    client_secret: str = ""
 
 
 def _calendars(path: Path, raw: dict[str, Any]) -> dict[str, CalendarProviderConfig]:
@@ -289,7 +304,16 @@ def _calendars(path: Path, raw: dict[str, Any]) -> dict[str, CalendarProviderCon
         if not isinstance(entry, dict):
             raise ConfigError(f"{path}: [calendars.{slug}] must be a table")
 
-        allowed = frozenset({"provider", "calendar_id", "enabled", "refresh_token"})
+        allowed = frozenset(
+            {
+                "provider",
+                "calendar_id",
+                "enabled",
+                "refresh_token",
+                "client_id",
+                "client_secret",
+            }
+        )
         _reject_unknown(path, f"calendars.{slug}", entry, allowed)
 
         label = f"[calendars.{slug}] "
@@ -306,13 +330,33 @@ def _calendars(path: Path, raw: dict[str, Any]) -> dict[str, CalendarProviderCon
             raise ConfigError(f"{path}: {label}enabled must be true or false")
         if "refresh_token" in entry and not isinstance(entry["refresh_token"], str):
             raise ConfigError(f"{path}: {label}refresh_token must be a string")
+        if "client_id" in entry and not isinstance(entry["client_id"], str):
+            raise ConfigError(f"{path}: {label}client_id must be a string")
+        if "client_secret" in entry and not isinstance(entry["client_secret"], str):
+            raise ConfigError(f"{path}: {label}client_secret must be a string")
+
+        enabled = entry.get("enabled", True)
+        client_id = entry.get("client_id", "")
+        client_secret = entry.get("client_secret", "")
+        if enabled and (not client_id or not client_secret):
+            # Both are required for the provider to ever refresh an access token at
+            # all (ADR 0013) — an enabled provider missing either can never actually
+            # sync, so this fails the boot rather than degrading silently forever.
+            raise ConfigError(
+                f"{path}: {label}client_id and client_secret are both required when "
+                "enabled = true; get them from the provider's developer console "
+                "(a Google Cloud OAuth client, or an Azure AD app registration), or "
+                "set enabled = false"
+            )
 
         calendars[slug] = CalendarProviderConfig(
             slug=slug,
             provider=provider,
             calendar_id=entry.get("calendar_id", "primary"),
-            enabled=entry.get("enabled", True),
+            enabled=enabled,
             refresh_token=entry.get("refresh_token", ""),
+            client_id=client_id,
+            client_secret=client_secret,
         )
     return calendars
 

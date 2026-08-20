@@ -152,8 +152,22 @@ class SessionTable:
     def issue(self, created_at: float | None = None) -> str:
         token = new_session_token()
         now = created_at if created_at is not None else time.time()
+        self._evict_expired(now)
         self._records[token] = _SessionRecord(token=token, expires_at=now + self._ttl_seconds)
         return token
+
+    def _evict_expired(self, now: float) -> None:
+        """Drop every record whose expiry has passed.
+
+        ``is_valid`` already treats an expired record as invalid, so this is not a
+        correctness fix — it is what keeps the table from growing by one entry per
+        login for the entire uptime of a long-running instance. Swept on login rather
+        than on every read: logins are rare relative to session checks, so this is
+        the cheap place to do it.
+        """
+        expired = [token for token, record in self._records.items() if record.expires_at < now]
+        for token in expired:
+            del self._records[token]
 
     def is_valid(self, token: str | None, now: float | None = None) -> bool:
         """True only for a token issued by *this* process and not yet expired."""

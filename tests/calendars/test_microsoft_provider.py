@@ -8,7 +8,8 @@ one ``httpx.Client`` stands in for the entire provider surface (CLAUDE.md: no ne
 dependency; ``httpx`` is already transitive, and ``httpx.MockTransport`` is part of it).
 
 Covered:
-- a clean free/busy (``getFreeBusy``) that parses busy spans correctly;
+- a clean free/busy (``getSchedule``) that parses busy spans correctly, ignoring
+  non-``"busy"`` schedule items (``free``, ``tentative``, ``oof``, ``workingElsewhere``);
 - the refresh-and-retry discipline — first call refreshes, a subsequent ``401`` triggers
   exactly one refresh and one retry, and a *second* consecutive ``401`` raises
   :class:`CalendarProviderError` (the caller degrades);
@@ -19,6 +20,7 @@ Covered:
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -39,9 +41,18 @@ def at(hour: int, minute: int = 0) -> datetime:
     return datetime(2026, 1, 6, hour, minute, tzinfo=UTC)
 
 
-def _busy_body(start: str, end: str) -> dict[str, object]:
-    """A getFreeBusy response carrying one definite busy span."""
-    return {"responses": [{"busy": [[start, end]]}]}
+def _schedule_body(*items: dict[str, object]) -> dict[str, object]:
+    """A getSchedule response carrying the given scheduleItems for one schedule."""
+    return {"value": [{"scheduleId": _USER, "scheduleItems": list(items)}]}
+
+
+def _busy_item(start: str, end: str) -> dict[str, object]:
+    """A definite-busy scheduleItem, naive dateTime + explicit UTC timeZone (Graph's shape)."""
+    return {
+        "status": "busy",
+        "start": {"dateTime": start, "timeZone": "UTC"},
+        "end": {"dateTime": end, "timeZone": "UTC"},
+    }
 
 
 class Scripted:
@@ -113,11 +124,49 @@ def _n_api(scripted: Scripted) -> int:
     return sum(1 for s in scripted.seen if not s["path"].endswith("/token"))
 
 
+class TestParseRfc3339:
+    """Regression: a naive Graph timestamp must not be read as server-local time."""
+
+    def test_a_naive_timestamp_is_treated_as_utc_regardless_of_the_hosts_tz(self):
+        import os
+        import time
+
+        from calon.calendars.microsoft import _parse_rfc3339
+
+        naive = "2026-08-20T09:00:00.0000000"  # Graph's own shape: no offset
+        original = os.environ.get("TZ")
+        try:
+            for zone in ("UTC", "America/New_York", "Asia/Tokyo"):
+                os.environ["TZ"] = zone
+                time.tzset()
+                assert _parse_rfc3339(naive) == datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
+        finally:
+            if original is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = original
+            time.tzset()
+
+    def test_an_offset_timestamp_is_honoured_as_written(self):
+        from calon.calendars.microsoft import _parse_rfc3339
+
+        assert _parse_rfc3339("2026-08-20T09:00:00+02:00") == datetime(
+            2026, 8, 20, 7, 0, tzinfo=UTC
+        )
+
+
 class TestFreeBusyGraph:
     def test_a_clean_freebusy_parses_the_busy_spans(self):
         scripted = Scripted(
             token=[("tok-1", 3600, "seed-refresh")],
-            auth=[(200, _busy_body("2026-01-06T10:30:00+00:00", "2026-01-06T11:30:00+00:00"))],
+            auth=[
+                (
+                    200,
+                    _schedule_body(
+                        _busy_item("2026-01-06T10:30:00.0000000", "2026-01-06T11:30:00.0000000")
+                    ),
+                )
+            ],
         )
         provider = _provider(scripted)
         spans = provider.free_busy("default", at(10, 0), at(12, 0))
@@ -128,6 +177,45 @@ class TestFreeBusyGraph:
         assert span.ends_at_utc == at(11, 30)
         assert span.reason == "provider report"
         assert provider._store.access_token == "tok-1"
+
+        # Regression: Graph v1.0 has no getFreeBusy action on this path — the real
+        # one is getSchedule, with its own request shape.
+        api_call = next(s for s in scripted.seen if not s["path"].endswith("/token"))
+        assert api_call["path"].endswith(f"/users/{_USER}/calendar/getSchedule")
+        sent = json.loads(api_call["body"])
+        assert sent["schedules"] == [_USER]
+        assert sent["startTime"] == {"dateTime": "2026-01-06T10:00:00", "timeZone": "UTC"}
+        assert sent["endTime"] == {"dateTime": "2026-01-06T12:00:00", "timeZone": "UTC"}
+        provider.close()
+
+    def test_non_busy_schedule_items_are_ignored(self):
+        # free / tentative / oof / workingElsewhere must not narrow availability —
+        # only a definite "busy" conflict should.
+        scripted = Scripted(
+            token=[("tok-1", 3600, "seed-refresh")],
+            auth=[
+                (
+                    200,
+                    _schedule_body(
+                        {
+                            "status": "free",
+                            "start": {"dateTime": "2026-01-06T10:00:00.0000000", "timeZone": "UTC"},
+                            "end": {"dateTime": "2026-01-06T10:30:00.0000000", "timeZone": "UTC"},
+                        },
+                        {
+                            "status": "tentative",
+                            "start": {"dateTime": "2026-01-06T10:30:00.0000000", "timeZone": "UTC"},
+                            "end": {"dateTime": "2026-01-06T11:00:00.0000000", "timeZone": "UTC"},
+                        },
+                        _busy_item("2026-01-06T11:00:00.0000000", "2026-01-06T11:30:00.0000000"),
+                    ),
+                )
+            ],
+        )
+        provider = _provider(scripted)
+        spans = provider.free_busy("default", at(10, 0), at(12, 0))
+        assert len(spans) == 1
+        assert spans[0].starts_at_utc == at(11, 0)
         provider.close()
 
     def test_the_first_401_triggers_one_refresh_and_one_retry(self):
@@ -135,7 +223,12 @@ class TestFreeBusyGraph:
             token=[("tok-1", 3600, "seed-refresh"), ("tok-2", 3600, "rotated-2")],
             auth=[
                 (401, {}),  # first attempt: the just-refreshed token is rejected
-                (200, _busy_body("2026-01-06T14:00:00+00:00", "2026-01-06T15:00:00+00:00")),
+                (
+                    200,
+                    _schedule_body(
+                        _busy_item("2026-01-06T14:00:00.0000000", "2026-01-06T15:00:00.0000000")
+                    ),
+                ),
             ],
         )
         provider = _provider(scripted)
@@ -187,6 +280,11 @@ class TestUpsertGraph:
         patch = api[1]
         assert patch["path"].endswith(f"/users/{_USER}/events/g-event-1")
         assert "bk-42" in patch["body"]
+        # Regression: "start"/"end" must carry both "dateTime" and "timeZone" — Graph's
+        # dateTimeTimeZone shape requires both, and the request used to omit "timeZone".
+        sent = json.loads(patch["body"])
+        assert sent["start"] == {"dateTime": "2026-01-06T10:00:00", "timeZone": "UTC"}
+        assert sent["end"] == {"dateTime": "2026-01-06T11:00:00", "timeZone": "UTC"}
         provider.close()
 
     def test_upsert_creates_when_no_existing_event_carries_the_uid(self):

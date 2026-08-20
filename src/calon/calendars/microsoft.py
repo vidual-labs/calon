@@ -19,9 +19,11 @@ owner, e.g. a UPN or mail-alias) whose calendar is synced — the Graph API addr
 calendar data as ``/users/{user}/``. There is no separate calendar id in the common
 case (the mailbox's default calendar).
 
-Free/busy: ``POST /users/{user}/calendar/getFreeBusy`` scoped to the requested UTC
-window; the response's ``busy`` list is the source of truth (``available``/``tentative``
-are intentionally ignored — only definite busy time reduces Calon availability).
+Free/busy: ``POST /users/{user}/calendar/getSchedule`` scoped to the requested UTC
+window (Graph v1.0 has no ``getFreeBusy`` action on this path); a ``scheduleItems``
+entry counts only when its ``status`` is exactly ``"busy"`` — ``free``, ``tentative``,
+``oof``, and ``workingElsewhere`` are intentionally ignored, since only a definite
+conflict should narrow what calon offers.
 
 Upsert: Microsoft Graph does **not** allow a caller-chosen event id, so
 ``upsert_event`` is a *re-runnable by UID* flow: it first locates an existing event
@@ -43,31 +45,30 @@ import httpx
 
 from calon.calendars import (
     CalendarEvent,
-    CalendarProviderError,
     FreeBusySpan,
 )
 from calon.calendars.oauth import (
     OAuthCredentials,
-    TokenStore,
-    calendar_error,
-    refresh_access_token,
+    ProviderTransport,
 )
 
-_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 _GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-_ERROR_PROVIDER = "microsoft"
 _ONE_DAY = timedelta(days=1)
 
 
-class MicrosoftGraphProvider:
+class MicrosoftGraphProvider(ProviderTransport):
     """Microsoft Graph adapter implementing :class:`CalendarProvider` (ADR 0009).
 
     See the module docstring for the refresh-and-retry discipline and the re-runnable
     by-UID upsert design. A ``client`` may be injected for tests (typically wrapping
     ``httpx.MockTransport``); when none is given the provider owns and closes its own.
+    The transport (client lifecycle, refresh-and-retry) is :class:`ProviderTransport`;
+    this class owns only the endpoints and payload shapes that are Graph's own.
     """
 
     name = "microsoft"
+    provider_name = "microsoft"
+    token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 
     def __init__(
         self,
@@ -78,85 +79,10 @@ class MicrosoftGraphProvider:
         credentials: OAuthCredentials | None = None,
         client: httpx.Client | None = None,
     ) -> None:
+        super().__init__(refresh_token=refresh_token, credentials=credentials, client=client)
         self.resource_slug = resource_slug
         # For the Graph API the per-resource handle is the mailbox *user*.
         self.user = calendar_id
-        self._credentials = credentials or OAuthCredentials()
-        self._store = TokenStore(refresh_token=refresh_token)
-        self._client = client
-        self._owns_client = client is None
-
-    def _client_instance(self) -> httpx.Client:
-        if self._client is None:
-            self._client = httpx.Client(timeout=10.0)
-            self._owns_client = True
-        return self._client
-
-    def close(self) -> None:
-        """Close the provider's own HTTP client (a no-op if one was injected)."""
-        if self._client is not None and self._owns_client:
-            self._client.close()
-            self._client = None
-
-    def _refresh(self) -> None:
-        """Refresh the access token once, or raise if the grant cannot be refreshed."""
-        try:
-            access, expires_in, refresh = refresh_access_token(
-                self._client_instance(),
-                token_url=_TOKEN_URL,
-                credentials=self._credentials,
-                refresh_token=self._store.refresh_token,
-            )
-        except CalendarProviderError:
-            raise
-        self._store.adopt(access, expires_in, refresh)
-
-    def _request(
-        self,
-        method: str,
-        url: str,
-        *,
-        params: dict[str, str] | None = None,
-        json_body: dict[str, Any] | None = None,
-    ) -> httpx.Response:
-        """Send one HTTP request, refreshing the token once on a ``401`` and retrying.
-
-        The first failure after a refresh re-raises the :class:`CalendarProviderError` as
-        a dead grant; the caller (free_busy / upsert_event) lets it propagate, and the
-        registry degrades. A transport error is wrapped the same way.
-        """
-        if not self._store.is_fresh():
-            self._refresh()
-        headers = {"Authorization": f"Bearer {self._store.access_token}"}
-        client = self._client_instance()
-        try:
-            response = client.request(method, url, params=params, json=json_body, headers=headers)
-        except httpx.HTTPError as exc:
-            raise calendar_error(
-                _ERROR_PROVIDER, f"transport error ({type(exc).__name__})"
-            ) from exc
-        if response.status_code == 401:
-            # One and only refresh-and-retry: a dead grant must not loop forever.
-            self._refresh()
-            headers = {"Authorization": f"Bearer {self._store.access_token}"}
-            try:
-                response = client.request(
-                    method, url, params=params, json=json_body, headers=headers
-                )
-            except httpx.HTTPError as exc:
-                raise calendar_error(
-                    _ERROR_PROVIDER, f"transport error after refresh ({type(exc).__name__})"
-                ) from exc
-            if response.status_code == 401:
-                raise calendar_error(
-                    _ERROR_PROVIDER, "refreshed token still rejected (401); grant is dead"
-                )
-        if response.status_code >= 400:
-            raise calendar_error(
-                _ERROR_PROVIDER,
-                f"{method} {url} returned {response.status_code}",
-            )
-        return response
 
     def free_busy(
         self,
@@ -166,27 +92,35 @@ class MicrosoftGraphProvider:
     ) -> tuple[FreeBusySpan, ...]:
         """Fetch provider busy spans overlapping the window (ADR 0009).
 
-        ``POST /users/{user}/calendar/getFreeBusy`` scoped to this resource's mailbox.
-        Only definite ``busy`` time reduces availability; ``available``/``tentative``
-        are ignored on purpose. A provider that reports no busy time returns an empty
-        tuple; an unreachable / dead provider raises :class:`CalendarProviderError`
-        (the caller degrades to Calon-only data).
+        ``POST /users/{user}/calendar/getSchedule`` scoped to this resource's mailbox
+        (Graph v1.0 has no ``getFreeBusy`` action on this path — ``getSchedule`` is the
+        real one). Only a ``scheduleItems`` entry whose ``status`` is exactly
+        ``"busy"`` reduces availability; ``free``, ``tentative``, ``oof``, and
+        ``workingElsewhere`` are ignored on purpose — only a definite conflict should
+        narrow what calon offers. The request is always made in the ``UTC`` zone (a
+        valid identifier Graph accepts directly, unlike the Windows zone names it
+        otherwise uses), so the response's ``start``/``end`` are read as UTC too. A
+        provider that reports no busy time returns an empty tuple; an unreachable /
+        dead provider raises :class:`CalendarProviderError` (the caller degrades to
+        Calon-only data).
         """
         body = {
-            "startDateTime": _rfc3339(window_start_utc),
-            "endDateTime": _rfc3339(window_end_utc),
-            "includeOnlineMeetings": False,
+            "schedules": [self.user],
+            "startTime": {"dateTime": _naive_rfc3339(window_start_utc), "timeZone": "UTC"},
+            "endTime": {"dateTime": _naive_rfc3339(window_end_utc), "timeZone": "UTC"},
         }
         response = self._request(
-            "POST", f"{_GRAPH_BASE}/users/{self.user}/calendar/getFreeBusy", json_body=body
+            "POST", f"{_GRAPH_BASE}/users/{self.user}/calendar/getSchedule", json_body=body
         )
         data = response.json() if response.content else {}
-        busy_list = ((data.get("responses") or [{}])[0].get("busy")) or []
+        schedules = data.get("value") or []
+        items = schedules[0].get("scheduleItems") if schedules else []
         spans: list[FreeBusySpan] = []
-        for entry in busy_list:
-            if not (isinstance(entry, list) and len(entry) >= 2):
+        for item in items or []:
+            if not isinstance(item, dict) or item.get("status") != "busy":
                 continue
-            start, end = entry[0], entry[1]
+            start = (item.get("start") or {}).get("dateTime")
+            end = (item.get("end") or {}).get("dateTime")
             if not start or not end:
                 continue
             spans.append(
@@ -210,8 +144,10 @@ class MicrosoftGraphProvider:
         payload: dict[str, Any] = {
             "subject": event.summary,
             "iCalUID": event.uid,
-            "start": {"dateTime": _rfc3339(event.starts_at_utc)},
-            "end": {"dateTime": _rfc3339(event.ends_at_utc)},
+            # Graph's dateTimeTimeZone shape requires both keys; a "dateTime" with no
+            # "timeZone" is a malformed event, not an implicit-UTC shorthand.
+            "start": {"dateTime": _naive_rfc3339(event.starts_at_utc), "timeZone": "UTC"},
+            "end": {"dateTime": _naive_rfc3339(event.ends_at_utc), "timeZone": "UTC"},
         }
         if event.description:
             payload["body"] = {"contentType": "text", "content": event.description}
@@ -251,6 +187,27 @@ def _rfc3339(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _naive_rfc3339(moment: datetime) -> str:
+    """Render an aware datetime as the naive local string Graph's ``dateTimeTimeZone``
+    shape wants — no offset, no ``Z``, paired with an explicit ``timeZone`` key.
+
+    Every caller here always requests/sends ``"UTC"`` as that ``timeZone``, so the
+    instant is first normalised to UTC before the offset is dropped.
+    """
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def _parse_rfc3339(text: str) -> datetime:
-    """Parse an ISO 8601 instant (Graph emits a numeric offset) into an aware UTC datetime."""
-    return datetime.fromisoformat(text).astimezone(UTC)
+    """Parse a Graph timestamp into an aware UTC datetime.
+
+    Graph's free/busy responses carry ``dateTime`` as a *naive* string (no offset —
+    e.g. ``"2026-08-20T09:00:00.0000000"``) alongside a separate ``timeZone`` field,
+    which our caller has already resolved to UTC by requesting the schedule in UTC.
+    A naive parse is therefore treated as already being UTC rather than reinterpreted
+    via ``astimezone`` — that would instead convert it *from* the server process's own
+    local zone, shifting every busy span by whatever offset the host happens to run
+    in. Some Graph endpoints do emit a numeric offset; an already-aware value is
+    honoured as written and only normalised to UTC.
+    """
+    parsed = datetime.fromisoformat(text)
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)

@@ -156,19 +156,26 @@ This is optional and off by default. With no `[calendars.<resource_slug>]` block
 against calon's own bookings only, and the requester gets the `.ics` file plus the Google
 and Outlook deeplinks. That standalone behaviour is the default and is fully available.
 
-To connect a resource's **own** Google Calendar or Microsoft 365 calendar, you do **one
-thing out-of-band**: complete the provider's OAuth flow once and paste the resulting
-**refresh token** into the config. calon does not run OAuth and holds no account
+To connect a resource's **own** Google Calendar or Microsoft 365 calendar you need two
+things: an **OAuth app** registered with the provider (a Google Cloud OAuth client, or an
+Azure AD app registration) — its `client_id` and `client_secret` go straight into the
+config — and, obtained **out-of-band** by running that app's OAuth flow once, the
+resulting **refresh token**. calon does not run OAuth itself and holds no account
 passwords. When enabled, calon reads that calendar's free/busy when checking availability
 and writes each accepted booking back to it, so you do not copy bookings in by hand.
 
-The config block (see `config/calon.example.toml`):
+The config block (see `config/calon.example.toml`). All four of `client_id`,
+`client_secret`, and `refresh_token` are required whenever `enabled = true`: without the
+first two the provider can never refresh an access token at all, so calon refuses to
+start rather than syncing nothing forever without you noticing.
 
 ```toml
 [calendars.default]
 provider = "google"            # or "microsoft"
 calendar_id = "you@example.com"
 enabled = true
+client_id = "..."              # the OAuth app's client id
+client_secret = "..."          # the OAuth app's client secret
 refresh_token = "..."          # the out-of-band refresh token
 ```
 
@@ -176,7 +183,8 @@ refresh_token = "..."          # the out-of-band refresh token
 
 1. In Google Cloud Console, create a project and enable the **Calendar API**.
 2. Create an **OAuth client ID** of type *Desktop app*; note the client id, client
-   secret, and redirect URI you registered.
+   secret, and redirect URI you registered — the client id and secret go into
+   `client_id` and `client_secret`.
 3. Run the one-time device/browser flow requesting the `https://www.googleapis.com/auth/
    calendar.events` scope. When it completes you receive an access token **and a refresh
    token** — use the refresh token.
@@ -187,7 +195,7 @@ refresh_token = "..."          # the out-of-band refresh token
 
 1. In the Azure portal, register an application and add the **Graph** `Calendars.ReadWrite`
    (or `Mail.ReadWrite`) delegated permission; note the application (client) id and the
-   client secret.
+   client secret — these go into `client_id` and `client_secret`.
 2. Run the one-time authorization-code flow with `offline_access` in the scope so the
    response includes a refresh token; use that refresh token.
 3. `calendar_id` is the **user** the calendar belongs to, e.g.
@@ -195,8 +203,9 @@ refresh_token = "..."          # the out-of-band refresh token
 
 ### Security and degradation
 
-`config/calon.toml` holds the refresh token, so treat it like a password: keep it out of
-version control (the example file is a template only), and restrict file permissions on a
+`config/calon.toml` holds the client secret and the refresh token, so treat both like
+passwords: keep them out of version control (the example file is a template only), and
+restrict file permissions on a
 production host. The refresh token is held in memory for the process lifetime; rotation is
 manual (update the config and restart).
 

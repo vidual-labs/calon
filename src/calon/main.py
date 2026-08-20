@@ -17,8 +17,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+import calon.intake.external as intake_external
 from calon import __version__
 from calon.api.v1 import router as v1_router
+from calon.calendars import CalendarProviderRegistry
 from calon.clock import utcnow
 from calon.config import OperatorConfig, Settings, load_operator_config
 from calon.db import Database
@@ -82,10 +84,8 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
         # per-request probing of that set is possible. A source that is not enabled
         # here receives 404, not 401 — that is what keeps an unauthenticated caller
         # from enumerating which slugs an instance has configured.
-        import importlib
-
         registry = SourceRegistry.from_config(
-            importlib.import_module("calon.intake.external"),
+            intake_external,
             source_configs=resolved_config.sources,
         )
         app.state.source_registry = registry
@@ -99,8 +99,6 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
         # per-request probing of it is possible. An instance with no calendars configured
         # gets an empty registry — every provider call degrades to calon-only
         # availability, which is exactly today's behaviour (CLAUDE.md §2).
-        from calon.calendars import CalendarProviderRegistry
-
         calendar_registry = CalendarProviderRegistry.from_config(resolved_config.calendars)
         app.state.calendar_registry = calendar_registry
         logger.info(

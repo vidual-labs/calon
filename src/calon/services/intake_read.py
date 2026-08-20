@@ -16,10 +16,9 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from calon.models import Booking, BookingIntent
+from calon.models import BookingIntent
 
 __all__ = [
-    "load_handoff_context",
     "load_intent_by_source_idempotency",
 ]
 
@@ -44,20 +43,3 @@ def load_intent_by_source_idempotency(
             BookingIntent.idempotency_key == idempotency_key,
         )
     )
-
-
-def load_handoff_context(
-    session: Session, *, intent_id: str
-) -> tuple[Booking, BookingIntent] | None:
-    """The ``(booking, intent)`` pair the handoff needs, or ``None`` when rejected.
-
-    Used by both the native route and the intake route; sharing the read keeps the
-    two paths from drifting on which columns to fetch.
-    """
-    intent = session.get(BookingIntent, intent_id)
-    if intent is None:
-        return None
-    booking = session.scalar(select(Booking).where(Booking.intent_id == intent_id))
-    if booking is None:
-        return None
-    return booking, intent

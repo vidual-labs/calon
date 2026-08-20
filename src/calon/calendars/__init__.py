@@ -50,7 +50,19 @@ class CalendarProviderError(RuntimeError):
     answer: a request is judged on calon's own data rather than failing. The error's
     ``str`` is safe to log because it must not echo a token; the providers'
     constructors ensure that.
+
+    ``status_code`` carries the response's HTTP status when the failure was an HTTP
+    error response (``None`` for a transport failure or a non-JSON body). It exists
+    so a caller that needs to branch on "was this specifically a 404" — the
+    create-vs-update decision in ``upsert_event`` — has a structured value to check
+    instead of substring-matching the digits out of the error's message, which can
+    misfire when the request URL itself happens to contain the digits "404" (a UUID's
+    hex, for instance).
     """
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,13 +201,15 @@ class CalendarProviderRegistry:
             return ()
 
     def upsert_event(self, resource_slug: str, event: CalendarEvent) -> None:
-        """Write a booking event to the provider, degrading to a warning on failure.
+        """Write a booking event to the provider.
 
-        This is the post-commit write-back: the booking has already been accepted inside
-        the write transaction when this runs, so a provider failure must not, and does
-        not, roll it back. The failure is surfaced through :class:`CalendarProviderError`
-        so the caller can append an audit record; the caller never re-raises this method's
-        exceptions. Resources with no configured provider are a silent no-op.
+        Unlike :meth:`free_busy`, this method does **not** catch
+        :class:`CalendarProviderError` itself — it propagates. This is the post-commit
+        write-back: the booking has already been accepted inside the write transaction
+        when this runs, so a provider failure must not, and does not, roll it back; the
+        caller (``perform_write_back``) is the one that catches the error, degrades,
+        and appends the audit record — it never lets this method's exception escape
+        further. Resources with no configured provider are a silent no-op.
         """
         provider = self._providers.get(resource_slug)
         if provider is None:
@@ -219,6 +233,9 @@ def _build_provider(provider: str, cfg: CalendarProviderConfig) -> CalendarProvi
     intake registry uses (``SourceRegistry.from_config`` imports its modules only at
     boot, so the package is importable without every adapter).
     """
+    from calon.calendars.oauth import OAuthCredentials
+
+    credentials = OAuthCredentials(client_id=cfg.client_id, client_secret=cfg.client_secret)
     if provider == "google":
         from calon.calendars import google as google_module
 
@@ -226,6 +243,7 @@ def _build_provider(provider: str, cfg: CalendarProviderConfig) -> CalendarProvi
             resource_slug=cfg.slug,
             calendar_id=cfg.calendar_id,
             refresh_token=cfg.refresh_token,
+            credentials=credentials,
         )
     if provider == "microsoft":
         from calon.calendars import microsoft as microsoft_module
@@ -234,6 +252,7 @@ def _build_provider(provider: str, cfg: CalendarProviderConfig) -> CalendarProvi
             resource_slug=cfg.slug,
             calendar_id=cfg.calendar_id,
             refresh_token=cfg.refresh_token,
+            credentials=credentials,
         )
     raise RuntimeError(f"provider {provider!r} is not supported")
 

@@ -141,6 +141,11 @@ def test_valid_signed_request_is_accepted(intake_client: TestClient) -> None:
     assert data["decision"]["code"] == "ACCEPTED"
     assert data["booking"] is not None
     assert data["booking"]["status"] == "confirmed"
+    # Regression: the booking used to always be reported in UTC regardless of what
+    # the request asked in, unlike the native route and BookingOut's own contract
+    # ("start and end are in the requester's timezone").
+    assert data["booking"]["timezone"] == TZ
+    assert data["booking"]["start"] == START
 
 
 def test_accepted_booking_is_written_to_the_database(
@@ -167,6 +172,28 @@ def test_accepted_booking_is_written_to_the_database(
         assert booking.status == "confirmed"
 
 
+def test_the_calendar_uid_uses_the_instance_host_not_the_source_slug(
+    intake_client: TestClient, database: Database
+) -> None:
+    # Regression: the intake route used to pass the *source slug* as
+    # ``instance_host`` to ``submit_intent``, so a booking accepted through
+    # external intake minted a UID like ``<id>@demo`` instead of
+    # ``<id>@<CALON_INSTANCE_HOST>`` — the same value the native route and the
+    # calendar write-back use.
+    body = json.dumps(_payload()).encode("utf-8")
+    headers = _headers(body, idempotency_key="key-uid")
+    r = intake_client.post("/api/v1/demo", content=body, headers=headers)
+    assert r.status_code == 201, r.text
+
+    intent_id = r.json()["intent_id"]
+    with database.read() as session:
+        booking = session.execute(
+            select(Booking).where(Booking.intent_id == intent_id)
+        ).scalar_one()
+        assert booking.ics_uid == f"{booking.id}@localhost"
+        assert not booking.ics_uid.endswith("@demo")
+
+
 # --------------------------------------------------------------------------
 # Idempotency
 # --------------------------------------------------------------------------
@@ -188,6 +215,8 @@ def test_idempotent_replay_returns_stored_decision(intake_client: TestClient) ->
     data = r2.json()
     assert data["intent_id"] == first_intent_id
     assert data["decision"] == first_decision
+    # The replay path must not fall back to UTC either.
+    assert data["booking"]["timezone"] == TZ
 
 
 def test_replayed_rejection_returns_the_stored_code(intake_client: TestClient) -> None:

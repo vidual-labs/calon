@@ -24,9 +24,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from calon.calendarkit import event_uid
 from calon.calendars import CalendarProviderRegistry, FreeBusySpan
 from calon.domain import AvailabilityPolicy, Decision, decide, to_utc
 from calon.domain.rules import BookingRequest
+from calon.ids import new_id
 from calon.intake.native import NATIVE_SOURCE
 from calon.models import Booking, BookingIntent
 from calon.schemas import BookingIntentIn, DecisionOut
@@ -187,6 +189,18 @@ def submit_intent(
             # Re-judging rather than synthesising a rejection keeps every decision the
             # domain's to make.
             decision = judge()
+            if decision.accepted:
+                # has_conflict() and the rule chain's own conflict check now disagree
+                # about the same span in the same transaction — a genuine invariant
+                # violation, not a request that can be resolved either way. Raising
+                # here (rather than writing a "rejected" intent whose decision_code
+                # reads ACCEPTED) keeps the audit trail from recording a decision
+                # that contradicts itself.
+                raise RuntimeError(
+                    "has_conflict() reported a conflict but the re-judged decision "
+                    "still accepted the same span; the conflict check and the rule "
+                    "chain's own overlap test have drifted apart"
+                )
         else:
             booking = _write_booking(
                 session,
@@ -197,7 +211,7 @@ def submit_intent(
                 block_start=block_start,
                 block_end=block_end,
                 now=now,
-                ics_uid=f"{intent_row.id}@{instance_host}",
+                instance_host=instance_host,
             )
 
     _record_outcome(session, intent_row, decision, accepted=booking is not None, now=now)
@@ -298,7 +312,7 @@ def _write_booking(
     block_start: datetime,
     block_end: datetime,
     now: datetime,
-    ics_uid: str,
+    instance_host: str,
     ics_sequence: int = 0,
 ) -> AcceptedBooking:
     """Create the booking row and mint its iCalendar identity.
@@ -307,8 +321,18 @@ def _write_booking(
     can never leave behind a dangling calendar identity, and the value is stable for the
     life of the booking (ADR 0004). It is only *issued* to the requester via the
     handoff endpoint, which is where the ``.ics`` file is rendered.
+
+    The row's own id is generated up front (rather than left to the column default and
+    read back after flush) so the ``UID`` can be minted from *this* booking's id —
+    ``calendarkit.event_uid(booking_id, instance_host)`` — the same call every other
+    reader of a booking's identity makes. Minting it from the booking's *intent* id
+    instead, as an earlier version of this function did, produced a stored ``ics_uid``
+    that disagreed with the UID every handoff and provider write-back actually used.
     """
+    booking_id = new_id()
+    ics_uid = event_uid(booking_id, instance_host)
     row = Booking(
+        id=booking_id,
         intent_id=intent_id,
         resource_id=resource_id,
         start_utc=start,

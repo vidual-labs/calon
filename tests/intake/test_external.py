@@ -228,3 +228,39 @@ class TestSourceRegistry:
             source_configs={"fallback": SourceConfig(slug="fallback", secret=SECRET)},
         )
         assert registry.get("fallback") is adapter
+
+    def test_from_config_gives_each_source_its_own_config_not_the_last_ones(self) -> None:
+        # Regression: the adapter-building loop used to read the *previous* loop's
+        # final ``cfg`` binding instead of the one for the slug it was actually on.
+        # With "openflow" inserted *first* in the operator config (so its own cfg
+        # is overwritten by the next source's before the build loop even starts)
+        # and "zzz-other" sorting after it — so the build loop's
+        # ``sorted(..., reverse=True)`` walk visits "zzz-other" before "openflow"
+        # — the openflow branch used to read whatever ``cfg`` the previous
+        # iteration left behind: "zzz-other"'s secret and no field map at all,
+        # even though openflow's own entry has both.
+        import calon.intake.external.openflow as openflow_module
+        from calon.intake.external.openflow import OpenFlowAdapter
+
+        other_mod = types.ModuleType("calon.intake.external.zzz-other")
+        other_mod.__dict__["zzz-other"] = HmacSourceAdapter("zzz-other", secret="OTHER-SECRET")
+
+        package = self._package({"zzz-other": other_mod, "openflow": openflow_module})
+        registry = SourceRegistry.from_config(
+            package,
+            source_configs={
+                "openflow": SourceConfig(
+                    slug="openflow",
+                    secret="OPENFLOW-SECRET",
+                    fields={"form1": {"start": "f_start", "name": "f_name", "email": "f_email"}},
+                ),
+                "zzz-other": SourceConfig(slug="zzz-other", secret="OTHER-SECRET"),
+            },
+        )
+        adapter = registry.get("openflow")
+        assert isinstance(adapter, OpenFlowAdapter)
+        assert adapter.secret == "OPENFLOW-SECRET"
+        assert "form1" in adapter._field_mappings
+        other = registry.get("zzz-other")
+        assert isinstance(other, HmacSourceAdapter)
+        assert other.secret == "OTHER-SECRET"

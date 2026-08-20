@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.datastructures import MutableHeaders
 
-from calon.api.deps import CalendarRegistryDep, DatabaseDep, get_source_registry
+from calon.api.deps import CalendarRegistryDep, DatabaseDep, SettingsDep, get_source_registry
 from calon.calendars import CalendarProviderRegistry
 from calon.clock import utcnow
 from calon.db import Database
@@ -63,6 +63,7 @@ async def intake(
     registry: RegistryDep,
     database: DatabaseDep,
     calendar_registry: CalendarRegistryDep,
+    settings: SettingsDep,
 ) -> Any:
     """One endpoint serves every registered source (``docs/external-intake.md``).
 
@@ -122,11 +123,12 @@ async def intake(
         response_headers=response.headers,
         source_slug=source_slug,
         calendar_registry=calendar_registry,
+        instance_host=settings.instance_host,
     )
     # _evaluate_with_write returns either a Submission (fresh) or a BookingResponse
     # (race-path replay). Distinguish by type.
     if isinstance(result, booking_service.Submission):
-        return _fresh_response(result)
+        return _fresh_response(result, intent.timezone)
     return result
 
 
@@ -146,6 +148,7 @@ def _evaluate_with_write(
     response_headers: MutableHeaders,
     source_slug: str,
     calendar_registry: CalendarProviderRegistry,
+    instance_host: str,
 ) -> booking_service.Submission | BookingResponse:
     """Run the evaluation path inside the write transaction.
 
@@ -172,7 +175,7 @@ def _evaluate_with_write(
                 now=now,
                 raw_payload=raw_payload,
                 idempotency_key=idempotency_key,
-                instance_host=source,
+                instance_host=instance_host,
                 calendar_registry=calendar_registry,
             )
         except IntegrityError:
@@ -227,12 +230,12 @@ def _assembled_replay_response(session: Session, stored: BookingIntent) -> Booki
     )
     booking: BookingOut | None = None
     if booking_row is not None:
-        booking = BookingOut(
+        booking = BookingOut.of(
             id=booking_row.id,
-            start=booking_row.start_utc,
-            end=booking_row.end_utc,
-            timezone="UTC",
+            start_utc=booking_row.start_utc,
+            end_utc=booking_row.end_utc,
             status=booking_row.status,
+            timezone=stored.requester_timezone,
         )
     return BookingResponse(
         intent_id=stored.id,
@@ -247,16 +250,16 @@ def _assembled_replay_response(session: Session, stored: BookingIntent) -> Booki
 # --------------------------------------------------------------------------------------
 
 
-def _fresh_response(submission: booking_service.Submission) -> JSONResponse:
+def _fresh_response(submission: booking_service.Submission, timezone: str) -> JSONResponse:
     """Assemble the response for a request the route just evaluated (HTTP 201 — new resource)."""
     booking: BookingOut | None = None
     if submission.booking is not None:
-        booking = BookingOut(
+        booking = BookingOut.of(
             id=submission.booking.id,
-            start=submission.booking.start_utc,
-            end=submission.booking.end_utc,
-            timezone="UTC",
+            start_utc=submission.booking.start_utc,
+            end_utc=submission.booking.end_utc,
             status="confirmed",
+            timezone=timezone,
         )
     body = BookingResponse(
         intent_id=submission.intent_id,
@@ -287,12 +290,12 @@ def _stored_outcome_response(intent_row: BookingIntent, database: Database) -> B
         )
         booking: BookingOut | None = None
         if booking_row is not None:
-            booking = BookingOut(
+            booking = BookingOut.of(
                 id=booking_row.id,
-                start=booking_row.start_utc,
-                end=booking_row.end_utc,
-                timezone="UTC",
+                start_utc=booking_row.start_utc,
+                end_utc=booking_row.end_utc,
                 status=booking_row.status,
+                timezone=intent_row.requester_timezone,
             )
         return BookingResponse(
             intent_id=intent_row.id,

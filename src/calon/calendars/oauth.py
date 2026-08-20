@@ -20,31 +20,34 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from httpx import Client
-
 from json import JSONDecodeError
+from typing import Any
+
+import httpx
 
 from calon.calendars import CalendarProviderError
 
 __all__ = [
     "OAuthCredentials",
+    "ProviderTransport",
     "TokenStore",
     "calendar_error",
     "refresh_access_token",
 ]
 
 
-def calendar_error(where: str, detail: str = "") -> CalendarProviderError:
+def calendar_error(
+    where: str, detail: str = "", *, status_code: int | None = None
+) -> CalendarProviderError:
     """A labelled provider error. The message names the *cause*, never a credential.
 
     ``where`` is the provider/operation (``"google free/busy"``) and ``detail`` a short
-    reason, both safe to log.
+    reason, both safe to log. ``status_code`` carries the response's HTTP status when
+    the failure was an HTTP error response, so a caller can branch on it structurally
+    (see :class:`CalendarProviderError`) rather than parsing the message.
     """
     message = where if not detail else f"{where}: {detail}"
-    return CalendarProviderError(message)
+    return CalendarProviderError(message, status_code=status_code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +93,7 @@ class TokenStore:
 
 
 def refresh_access_token(
-    client: Client,
+    client: httpx.Client,
     *,
     token_url: str,
     credentials: OAuthCredentials,
@@ -98,17 +101,20 @@ def refresh_access_token(
 ) -> tuple[str, int, str]:
     """Post a refresh-token grant; return ``(access_token, expires_in, refresh_token)``.
 
-    One POST to ``token_url`` with ``grant_type=refresh_token``. A non-200 answer, a
-    non-JSON body, or a missing ``access_token``/``expires_in`` all raise
-    :class:`CalendarProviderError` (via :func:`calendar_error`) — the caller treats that
-    as a dead grant and degrades (CLAUDE.md §2). The returned refresh token is the one
-    the grant echoed back: providers rotate refresh tokens, so the next call must use
-    *this* one, not the original (the provider persists the refreshed store, which is why
-    the TOML's seed value is authoritative only before the first real refresh).
+    One POST to ``token_url`` with ``grant_type=refresh_token``, as
+    ``application/x-www-form-urlencoded`` — RFC 6749 §4.1.3 requires it for the token
+    endpoint, and both Google's and Microsoft's reject a JSON body with a ``400``. A
+    non-200 answer, a non-JSON body, or a missing ``access_token``/``expires_in`` all
+    raise :class:`CalendarProviderError` (via :func:`calendar_error`) — the caller
+    treats that as a dead grant and degrades (CLAUDE.md §2). The returned refresh token
+    is the one the grant echoed back: providers rotate refresh tokens, so the next call
+    must use *this* one, not the original (the provider persists the refreshed store,
+    which is why the TOML's seed value is authoritative only before the first real
+    refresh).
     """
     response = client.post(
         token_url,
-        json={
+        data={
             "grant_type": "refresh_token",
             "client_id": credentials.client_id,
             "client_secret": credentials.client_secret,
@@ -129,3 +135,106 @@ def refresh_access_token(
     if not (isinstance(granted, str) and granted):
         granted = refresh_token
     return access_token, expires_in, granted
+
+
+class ProviderTransport:
+    """Shared HTTP transport for a calendar provider: client lifecycle plus the
+    401→refresh→retry-once discipline (ADR 0009 / 0013).
+
+    Google's and Microsoft's providers differ only in their endpoints and payload
+    shapes; the transport underneath — owning or borrowing an ``httpx.Client``, the
+    refresh cycle, and "retry exactly once on a 401" — is identical, which is what
+    ADR 0013 means by "the transport... are shared". A subclass sets
+    :attr:`provider_name` (for error labelling) and :attr:`token_url` (its OAuth
+    token endpoint) as class attributes, calls ``super().__init__(...)`` with the
+    constructor arguments every provider needs, and calls :meth:`_request` for every
+    API call.
+    """
+
+    #: The provider identifier used to label :class:`CalendarProviderError` messages
+    #: (e.g. ``"google"``, ``"microsoft"``). Set by the subclass.
+    provider_name: str
+    #: The provider's OAuth token endpoint. Set by the subclass.
+    token_url: str
+
+    def __init__(
+        self,
+        *,
+        refresh_token: str = "",
+        credentials: OAuthCredentials | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self._credentials = credentials or OAuthCredentials()
+        self._store = TokenStore(refresh_token=refresh_token)
+        self._client = client
+        self._owns_client = client is None
+
+    def _client_instance(self) -> httpx.Client:
+        if self._client is None:
+            self._client = httpx.Client(timeout=10.0)
+            self._owns_client = True
+        return self._client
+
+    def close(self) -> None:
+        """Close the provider's own HTTP client (a no-op if one was injected)."""
+        if self._client is not None and self._owns_client:
+            self._client.close()
+            self._client = None
+
+    def _refresh(self) -> None:
+        """Refresh the access token once, or raise if the grant cannot be refreshed."""
+        access, expires_in, refresh = refresh_access_token(
+            self._client_instance(),
+            token_url=self.token_url,
+            credentials=self._credentials,
+            refresh_token=self._store.refresh_token,
+        )
+        self._store.adopt(access, expires_in, refresh)
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> httpx.Response:
+        """Send one HTTP request, refreshing the token once on a ``401`` and retrying.
+
+        The first failure after a refresh re-raises the :class:`CalendarProviderError` as
+        a dead grant; the caller (free_busy / upsert_event) lets it propagate, and the
+        registry degrades. A transport error is wrapped the same way.
+        """
+        if not self._store.is_fresh():
+            self._refresh()
+        headers = {"Authorization": f"Bearer {self._store.access_token}"}
+        client = self._client_instance()
+        try:
+            response = client.request(method, url, params=params, json=json_body, headers=headers)
+        except httpx.HTTPError as exc:
+            raise calendar_error(
+                self.provider_name, f"transport error ({type(exc).__name__})"
+            ) from exc
+        if response.status_code == 401:
+            # One and only refresh-and-retry: a dead grant must not loop forever.
+            self._refresh()
+            headers = {"Authorization": f"Bearer {self._store.access_token}"}
+            try:
+                response = client.request(
+                    method, url, params=params, json=json_body, headers=headers
+                )
+            except httpx.HTTPError as exc:
+                raise calendar_error(
+                    self.provider_name, f"transport error after refresh ({type(exc).__name__})"
+                ) from exc
+            if response.status_code == 401:
+                raise calendar_error(
+                    self.provider_name, "refreshed token still rejected (401); grant is dead"
+                )
+        if response.status_code >= 400:
+            raise calendar_error(
+                self.provider_name,
+                f"{method} {url} returned {response.status_code}",
+                status_code=response.status_code,
+            )
+        return response

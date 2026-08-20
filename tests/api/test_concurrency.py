@@ -12,6 +12,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -19,7 +20,7 @@ from calon.db import Database
 from calon.intake.native import NATIVE_SOURCE
 from calon.models import Booking
 from calon.schemas import BookingIntentIn
-from calon.services import booking_service
+from calon.services import booking_service, repository
 from tests.conftest import NOW, booking_payload
 
 CONTESTED_SLOT = "2026-09-02T10:00:00+02:00"
@@ -54,6 +55,22 @@ def test_the_losers_are_recorded_as_rejections_not_as_errors(
     # Exactly one booking exists, and every other attempt is on the record as a rejection
     # rather than having disappeared.
     assert len(bookings) == 1
+
+
+def test_a_conflict_check_that_disagrees_with_the_rule_chain_raises_loudly(
+    client: TestClient, database: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # If repository.has_conflict() ever reports a conflict that the re-judged
+    # decision does not see, that is a genuine invariant violation between the
+    # last-line-of-defence check and the rule chain's own overlap test -- not
+    # something to paper over by writing a "rejected" intent whose own
+    # decision_code reads ACCEPTED. Force that disagreement directly.
+    monkeypatch.setattr(repository, "has_conflict", lambda *args, **kwargs: True)
+
+    payload = booking_payload(CONTESTED_SLOT)
+    intent = BookingIntentIn.model_validate(payload)
+    with pytest.raises(RuntimeError, match="has_conflict"), database.write() as session:
+        booking_service.submit_intent(session, intent, source=NATIVE_SOURCE, now=NOW)
 
 
 def _race(

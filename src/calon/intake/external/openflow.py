@@ -39,6 +39,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import ValidationError
 
@@ -204,8 +205,6 @@ class OpenFlowAdapter:
         timestamp_header = _hget(request.headers, TIMESTAMP_HEADER)
         if timestamp_header is not None:
             # The standard scheme takes over; the shim is not consulted.
-            from datetime import timedelta
-
             verify_signature(
                 request.headers,
                 request.raw_body,
@@ -253,6 +252,11 @@ class OpenFlowAdapter:
             # A present-but-unparseable clock: recordable in metadata, not a
             # signature failure. Do not silently treat it as "outside the window" —
             # that would 401 a request the parse step would have 400'd.
+            return
+        if ts.tzinfo is None:
+            # A clock with no offset is just as unresolvable as one that fails to
+            # parse at all — comparing it against ``now`` would raise, not reject,
+            # and this shim never turns an ambiguous payload into a 401 (see above).
             return
         if abs(now - ts) > OPENFLOW_CLOCK_WINDOW:
             raise IntakeAuthError("request timestamp is outside the allowed replay window")
@@ -316,19 +320,21 @@ class OpenFlowAdapter:
         # ``BookingIntentIn`` takes aware ``datetime`` values, not strings. The
         # answers are the provider's own ISO-8601 strings in the zone the form
         # declared; parse them here (the adapter translates — the schema is the
-        # contract, it does not do provider-specific re-serialising). An explicit
+        # contract, it does not do provider-specific re-serialising). A naive
+        # answer (the common case — a form's date/time fields carry no offset) is
+        # interpreted *as* the form's declared zone, not converted into it: calling
+        # ``astimezone`` on a naive value reinterprets it from the server's own local
+        # zone, which would silently shift the booking by whatever offset the host
+        # happens to run in. An answer that already carries its own offset is
+        # honoured as written and only re-expressed in the form's zone. An explicit
         # end before start is a malformed span, not a request to backfill the zone's
         # default duration backwards, so we reject it here (a 400, not a 500). A
         # malformed instant or an unresolvable IANA zone is the operator's config;
         # both surface the same way — as a parse error the route turns into a 400.
         try:
-            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
             tz = ZoneInfo(timezone)
-            start_dt = datetime.fromisoformat(str(start_raw)).astimezone(tz)
-            end_dt: datetime | None = (
-                None if end_raw is None else datetime.fromisoformat(str(end_raw)).astimezone(tz)
-            )
+            start_dt = _local_instant(str(start_raw), tz)
+            end_dt: datetime | None = None if end_raw is None else _local_instant(str(end_raw), tz)
         except (ValueError, TypeError, ZoneInfoNotFoundError) as exc:
             raise IntakeParseError(
                 f"form {form_id!r}: start/end answers or the configured timezone "
@@ -384,6 +390,19 @@ class OpenFlowAdapter:
             raise IntakeParseError(
                 f"form {form_id!r}: the provider's answers do not fit the booking schema ({exc})"
             ) from exc
+
+
+def _local_instant(raw: str, tz: ZoneInfo) -> datetime:
+    """Parse an OpenFlow answer as an instant in ``tz``.
+
+    A naive answer (no offset — the common case for a form's date/time fields) is
+    interpreted *as* ``tz``: ``.replace(tzinfo=tz)``, not ``.astimezone(tz)``, which
+    would instead reinterpret it from whatever zone the *server process* happens to
+    be running in. An answer that already carries its own offset is honoured as
+    written and only re-expressed in ``tz`` for display.
+    """
+    parsed = datetime.fromisoformat(raw)
+    return parsed.replace(tzinfo=tz) if parsed.tzinfo is None else parsed.astimezone(tz)
 
 
 def _hget(headers: Mapping[str, str], name: str) -> str | None:

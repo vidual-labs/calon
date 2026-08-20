@@ -12,15 +12,82 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
-- _Nothing yet._
+- `[calendars.<resource_slug>]` now accepts `client_id` and `client_secret` — the
+  connected provider's OAuth app credentials. Previously there was nowhere to
+  configure them, so a connected Google Calendar or Microsoft 365 calendar could
+  never actually refresh an access token and every sync attempt failed silently.
 
 ### Changed
 
-- _Nothing yet._
+- **BREAKING:** an enabled `[calendars.<resource_slug>]` entry now requires both
+  `client_id` and `client_secret`; calon refuses to start without them rather
+  than booting into a calendar sync that can never work. If you already have a
+  `[calendars.*]` block enabled, add both before upgrading (see
+  `docs/self-hosting.md`).
 
 ### Fixed
 
-- _Nothing yet._
+- An OpenFlow form's start/end answer with no UTC offset (the common case for a
+  form's own date/time fields) was interpreted in the server process's local
+  timezone instead of the form's configured one, which could book the wrong hour
+  depending on the host's `TZ`.
+- An OpenFlow submission whose payload `timestamp` had no UTC offset caused the
+  intake endpoint to answer `500` instead of accepting the request.
+- Enabling more than one external intake source, with OpenFlow among them, could
+  build the OpenFlow adapter from a different source's secret and field mapping
+  (or fail to boot claiming OpenFlow has no field mapping when it does), depending
+  on the order sources were listed in `config/calon.toml`.
+- Logging out of the operator panel revoked the session on the server but never
+  cleared the browser's session cookie.
+- Timestamps on the operator dashboard were rendered as malformed, unparseable
+  ISO 8601 strings (a doubled UTC suffix).
+- An accepted booking's `.ics` file, its calendar handoff, and the event written
+  back to a connected provider could carry three different `UID`s for the same
+  booking, so a calendar could not recognise them as the same event. All three
+  now agree on one identity.
+- A booking accepted through external intake minted its calendar `UID` from the
+  source's own slug instead of the instance's configured host, unlike the native
+  booking API and the public booking form.
+- The public booking form (`POST /book`) never checked a connected resource's
+  calendar for conflicts and never wrote accepted bookings back to it, unlike
+  the booking API — a resource with calendar sync configured could be double
+  booked through its own booking page.
+- The `.ics` calendar file emitted its revision as `SEQ`, a property RFC 5545
+  does not register, instead of `SEQUENCE`. Calendar clients ignored the value,
+  so a re-download of an amended booking was not guaranteed to update the
+  existing calendar entry in place.
+- A booking accepted through external intake always reported its start and end
+  times in UTC, regardless of the timezone the request declared — unlike the
+  native booking API, which reports them in the requester's own timezone as
+  documented.
+- The Google Calendar and Microsoft 365 OAuth token refresh posted a JSON body;
+  both providers' token endpoints require form encoding and rejected it, so a
+  connected calendar's access token could never actually be refreshed.
+- A Google Calendar write-back sent `event.uid` as the event's own `id`, but
+  calon's UID contains characters (`-`, `@`) Google's event-id charset does not
+  allow, so the write-back always failed for a connected Google resource.
+  Bookings are now keyed by a derived id and identified to Google by `iCalUID`.
+- The `freeBusy` request to Google Calendar sent a bare list of calendar-id
+  strings; the API requires a list of objects and rejected the request.
+- A Microsoft Graph timestamp with no UTC offset (the shape Graph's free/busy
+  response actually uses) was reinterpreted in the server process's local
+  timezone instead of being read as UTC, which could shift a resource's busy
+  time by several hours depending on the host's `TZ`.
+- A Google Calendar write-back's create-vs-update decision inspected the
+  exception message for the substring `"404"`, which could misfire when the
+  request URL happened to contain those digits. It now checks the response's
+  actual HTTP status.
+- Microsoft 365 free/busy checking called `getFreeBusy`, an action Graph v1.0
+  does not have on that path, so it always failed and every resource with a
+  connected Microsoft calendar degraded to calon-only availability. It now
+  calls the real `getSchedule` action, and only a definite `busy` conflict
+  narrows availability.
+- A Microsoft 365 calendar write-back's event create/update request omitted
+  the required `timeZone` alongside `dateTime`, which Graph rejects as a
+  malformed event.
+- The operator login's session table never dropped an expired session's own
+  record (only ever treating it as invalid), so a long-running instance's
+  memory usage grew by one entry per login for its entire uptime.
 
 ### Security
 

@@ -205,17 +205,24 @@ organizer_email = ""
 #                                (e.g. "you@tenant.onmicrosoft.com"); the
 #                                primary calendar of that user is synced.
 # enabled        true to turn the connection on for this resource.
+# client_id      the OAuth app's client id, from the provider's developer
+# client_secret  console (a Google Cloud OAuth client, or an Azure AD app
+#                registration). Both are required whenever enabled = true —
+#                without them the provider can never refresh an access token,
+#                so calon refuses to start rather than silently never syncing.
 # refresh_token  the OAuth refresh token you already obtained for this account.
 #                calon does NOT run OAuth: complete the provider's
 #                authorization flow out-of-band and paste the resulting
 #                refresh token here. See "Connecting a resource's calendar"
 #                in docs/self-hosting.md for exactly how to get it.
 #
-# This file is git-ignored and the refresh_token is a secret — never commit
-# your real config/calon.toml.
+# This file is git-ignored and client_secret/refresh_token are secrets — never
+# commit your real config/calon.toml.
 # ---------------------------------------------------------------------------
 # [calendars.default]
 # provider = "google"
 # calendar_id = "you@example.com"
 # enabled = true
+# client_id = "replace-me-with-the-oauth2-client-id"
+# client_secret = "replace-me-with-the-oauth2-client-secret"
 # refresh_token = "replace-me-with-the-oauth2-refresh-token"

@@ -16,6 +16,7 @@ Routes:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Mapping
 from datetime import datetime
@@ -30,13 +31,14 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from calon.api.deps import AuthorisedOperator, DatabaseDep, SettingsDep
-from calon.calendarkit import build_deeplinks, event_uid
+from calon.api.deps import AuthorisedOperator, CalendarRegistryDep, DatabaseDep, SettingsDep
+from calon.api.v1 import _calendar_writeback
+from calon.calendarkit import build_deeplinks, event_for, event_uid, ics_filename
 from calon.clock import utcnow
 from calon.config import Settings
 from calon.intake import native
 from calon.models import Booking, BookingIntent
-from calon.schemas import CalendarHandoff, CalendarLinksOut
+from calon.schemas import BookingIntentIn, CalendarHandoff, CalendarLinksOut, RequesterIn
 from calon.security import SESSION_COOKIE
 from calon.services import booking_service
 
@@ -90,20 +92,8 @@ def _form_context(request: Request) -> dict[str, Any]:
 def _build_handoff_for_form(
     booking: Booking, intent: BookingIntent, settings: Settings
 ) -> CalendarHandoff:
-    """Build the handoff for the success page, using the same logic as api/v1/bookings."""
-    from calon.calendarkit import CalendarEvent, ics_filename
-
-    event = CalendarEvent(
-        booking_id=booking.id,
-        instance_host=settings.instance_host,
-        sequence=booking.ics_sequence or 0,
-        title=intent.subject,
-        description=intent.notes or "",
-        location=None,
-        start_utc=booking.start_utc,
-        end_utc=booking.end_utc,
-        timezone=intent.requester_timezone,
-    )
+    """Build the handoff for the success page, using the same builder as api/v1/bookings."""
+    event = event_for(booking, intent, instance_host=settings.instance_host)
     links = build_deeplinks(event)
     return CalendarHandoff(
         ics_url=f"{settings.base_url}/api/v1/bookings/{booking.id}/calendar.ics",
@@ -129,13 +119,17 @@ async def book_form_post(
     request: Request,
     database: DatabaseDep,
     settings: SettingsDep,
+    calendar_registry: CalendarRegistryDep,
 ) -> HTMLResponse:
     """Handle a submitted booking form.
 
     Builds a ``BookingIntentIn``, calls ``submit_intent`` exactly as the API does
     (``source="native"``), and renders the result in place — success with handoff
     links on acceptance, or the form re-displayed with the rejection reasons and
-    all user-entered values preserved.
+    all user-entered values preserved. Also mirrors the API route's post-commit
+    calendar write-back (ADR 0009): a resource with a connected provider gets its
+    free/busy checked and the accepted booking written back exactly as it would
+    through ``POST /api/v1/bookings`` — the form is not a second, divergent path.
     """
     form = await request.form()
     form_data: dict[str, str] = {}
@@ -182,8 +176,6 @@ async def book_form_post(
         )
 
     # --- build the canonical intent ---
-    from calon.schemas import BookingIntentIn, RequesterIn
-
     try:
         intent_in = BookingIntentIn(
             resource_slug=request.app.state.config.resource.slug,
@@ -218,8 +210,10 @@ async def book_form_post(
             now=now,
             raw_payload=raw_payload,
             instance_host=settings.instance_host,
+            calendar_registry=calendar_registry,
         )
         success_ctx = None
+        intent_row = None
         if submission.booking is not None:
             booking_row = session.get(Booking, submission.booking.id)
             intent_row = session.get(BookingIntent, submission.intent_id)
@@ -234,6 +228,18 @@ async def book_form_post(
                     "booking_id": submission.booking.id,
                     "handoff": handoff,
                 }
+
+    # Post-commit write-back (ADR 0009), outside the transaction: the provider is a
+    # network hop and a failing provider must not hold the DB lock or roll the
+    # booking back. A resource with no configured provider is a silent no-op.
+    if submission.booking is not None and intent_row is not None:
+        _calendar_writeback.perform_write_back(
+            database,
+            calendar_registry,
+            booking=submission.booking,
+            intent=intent_row,
+            now=now,
+        )
 
     # --- render ---
     if submission.accepted:
@@ -318,15 +324,20 @@ async def login_submit(request: Request, settings: SettingsDep) -> Response:
 
 
 @router.post("/logout", name="logout")
-def logout(request: Request, response: Response) -> Response:
+def logout(request: Request) -> Response:
     """End the current session and redirect to the login form."""
     store = request.app.state.login_store
     if store is not None:
         cookie = request.cookies.get(SESSION_COOKIE)
         if cookie:
             store.end_session(cookie)
+    # Build the redirect, then delete the cookie on *that* response — an injected
+    # ``response`` parameter here would be a different object from the one FastAPI
+    # actually sends, so the deletion would be silently dropped (the same mistake
+    # ``login_submit`` above avoids by attaching its cookie to its own redirect).
+    response = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(SESSION_COOKIE)
-    return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -369,8 +380,6 @@ async def _extract_login(request: Request) -> str:
     """
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
-        import json
-
         data = await request.body()
         payload = json.loads(data.decode("utf-8")) if data else {}
         return str(payload.get("login", ""))
@@ -416,16 +425,18 @@ def _load_intents(session: Session, *, limit: int = 50) -> list[dict[str, object
         result.append(
             {
                 "id": intent.id,
-                "received_at": (intent.received_at_utc.isoformat() + "Z")
-                if hasattr(intent, "received_at_utc") and intent.received_at_utc
-                else None,
+                # ``received_at_utc`` already comes back tz-aware (UtcDateTime
+                # reattaches UTC on read), so ``isoformat()`` already carries the
+                # offset; appending "Z" on top produced a malformed
+                # "+00:00Z" suffix.
+                "received_at": (
+                    intent.received_at_utc.isoformat() if intent.received_at_utc else None
+                ),
                 "requester_name": intent.requester_name,
                 "subject": intent.subject,
                 "status": booking.status if booking else None,
                 "booking_id": booking.id if booking else None,
-                "start": (booking.start_utc.isoformat() + "Z")
-                if booking and booking.start_utc
-                else None,
+                "start": booking.start_utc.isoformat() if booking and booking.start_utc else None,
                 "ics_url": f"/api/v1/bookings/{booking.id}/calendar.ics" if booking else None,
             }
         )
