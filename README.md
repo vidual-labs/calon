@@ -168,6 +168,20 @@ curl -G localhost:8000/api/v1/availability \
 be taken by someone else a moment later, and the authoritative answer is what happens when
 a booking is actually submitted.
 
+## Screenshots
+
+The public booking form at `/book`:
+
+![The calon booking form, showing name, email, phone, date, time, subject, and notes fields](docs/screenshots/book.png)
+
+The login-gated operator dashboard at `/bookings`:
+
+![The calon operator dashboard listing accepted bookings with requester, subject, status, and a calendar download link](docs/screenshots/bookings.png)
+
+The operator login at `/login`:
+
+![The calon operator login card with a single password field](docs/screenshots/login.png)
+
 ## Architecture summary
 
 | Concern | Choice |
