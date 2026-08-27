@@ -84,17 +84,20 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
                 row.resource_slug: row.refresh_token
                 for row in session.scalars(sa.select(CalendarCredentialRow))
             }
-            # ADR 0016: a resource whose OAuth app credentials were entered in the
-            # dashboard rather than the TOML is configured here too, so the connection
-            # survives a restart. The TOML still wins where it has an entry. A client
-            # with no credential yet is deliberately left out: a provider that can never
-            # refresh is worse than no provider, which is simply the standalone default.
+            # ADR 0016 / 0017: a resource set up through the dashboard — an OAuth client
+            # that has been authorized, or a subscribed ICS feed — is configured here too,
+            # so it survives a restart. The TOML still wins where it has an entry. An
+            # OAuth client with no credential yet is deliberately left out: a provider
+            # that can never refresh is worse than no provider, which is simply the
+            # standalone default. A feed needs no such grant — its URL is the credential.
             calendar_configs = {
                 slug: cfg
                 for slug, cfg in calendar_connect_service.configured_calendars(
                     session, resolved_config
                 ).items()
-                if slug in resolved_config.calendars or slug in connected_refresh_tokens
+                if slug in resolved_config.calendars
+                or slug in connected_refresh_tokens
+                or cfg.provider == "ics"
             }
 
         app.state.db = database

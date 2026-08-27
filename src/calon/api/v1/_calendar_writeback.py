@@ -77,8 +77,10 @@ def perform_write_back(
         resource_slug = resolve_resource_slug(session, intent=intent)
 
     # No provider for this resource: nothing to sync and nothing to audit. Returning
-    # ``None`` (rather than ``True``) keeps ``calendar_synced`` honest.
-    if calendar_registry.provider_for(resource_slug) is None:
+    # ``None`` (rather than ``True``) keeps ``calendar_synced`` honest. A read-only
+    # provider — a published ICS feed (ADR 0017) — is the same case: it reports busy
+    # time but has nowhere to put an event, so there is no failure to audit either.
+    if not calendar_registry.writes_back(resource_slug):
         return None
 
     provider_event = CalendarProviderEvent(

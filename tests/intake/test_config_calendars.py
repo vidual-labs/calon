@@ -325,3 +325,59 @@ class TestRegistryMutators:
         registry = CalendarProviderRegistry()
         registry.remove_provider("does-not-exist")  # must not raise
         assert registry.provider_for("does-not-exist") is None
+
+
+class TestIcsFeedProviderTable:
+    """``provider = "ics"`` — a published feed, which needs a URL and no OAuth app."""
+
+    def test_a_feed_table_loads_without_any_credentials(self, tmp_path: pathlib.Path) -> None:
+        body = BASE + (
+            '\n[calendars.default]\nprovider = "ics"\n'
+            'feed_url = "https://calendar.example.com/secret/basic.ics"\n'
+        )
+        cal = _load(tmp_path, body).calendars["default"]
+        assert cal.provider == "ics"
+        assert cal.feed_url == "https://calendar.example.com/secret/basic.ics"
+        assert cal.client_id == ""
+        assert cal.client_secret == ""
+
+    def test_the_resource_timezone_is_carried_onto_the_entry(self, tmp_path: pathlib.Path) -> None:
+        """A feed's all-day and floating events are read in the resource's own zone."""
+        body = BASE + (
+            '\n[calendars.default]\nprovider = "ics"\n'
+            'feed_url = "https://calendar.example.com/secret/basic.ics"\n'
+        )
+        assert _load(tmp_path, body).calendars["default"].timezone == "Europe/Berlin"
+
+    def test_an_enabled_feed_without_a_url_is_a_boot_error(self, tmp_path: pathlib.Path) -> None:
+        body = BASE + '\n[calendars.default]\nprovider = "ics"\n'
+        with pytest.raises(ConfigError, match="feed_url is required"):
+            _load(tmp_path, body)
+
+    def test_a_disabled_feed_without_a_url_is_tolerated(self, tmp_path: pathlib.Path) -> None:
+        body = BASE + '\n[calendars.default]\nprovider = "ics"\nenabled = false\n'
+        assert _load(tmp_path, body).calendars["default"].enabled is False
+
+    def test_a_url_that_is_not_http_is_rejected(self, tmp_path: pathlib.Path) -> None:
+        body = BASE + '\n[calendars.default]\nprovider = "ics"\nfeed_url = "file:///etc/passwd"\n'
+        with pytest.raises(ConfigError, match="http"):
+            _load(tmp_path, body)
+
+    def test_a_feed_needs_no_client_credentials(self, tmp_path: pathlib.Path) -> None:
+        """The OAuth requirement (ADR 0013) must not be applied to a provider with no OAuth."""
+        body = BASE + (
+            '\n[calendars.default]\nprovider = "ics"\nenabled = true\n'
+            'feed_url = "https://calendar.example.com/secret/basic.ics"\n'
+        )
+        assert _load(tmp_path, body).calendars["default"].enabled is True
+
+    def test_a_feed_builds_a_read_only_provider(self, tmp_path: pathlib.Path) -> None:
+        body = BASE + (
+            '\n[calendars.default]\nprovider = "ics"\n'
+            'feed_url = "https://calendar.example.com/secret/basic.ics"\n'
+        )
+        registry = CalendarProviderRegistry.from_config(_load(tmp_path, body).calendars)
+        provider = registry.provider_for("default")
+        assert provider is not None
+        assert provider.name == "ics"
+        assert registry.writes_back("default") is False

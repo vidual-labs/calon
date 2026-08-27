@@ -197,7 +197,8 @@ organizer_email = ""
 # If the provider is unreachable or errors, that degrades back to
 # Calon-only availability for that request — it does NOT fail the booking.
 #
-# provider       "google" (Google Calendar) or "microsoft" (Microsoft 365).
+# provider       "google" (Google Calendar), "microsoft" (Microsoft 365), or "ics"
+#                (a published calendar feed — see the bottom of this section).
 # calendar_id    the calendar handle:
 #                  google    -> the calendar id (usually the account email,
 #                                e.g. "you@example.com") or a secondary-calendar id.
@@ -228,6 +229,28 @@ organizer_email = ""
 # dashboard button stores its refresh token in calon.db instead — give that
 # file the same care.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# No developer console? Subscribe to a published calendar feed instead
+# (ADR 0017). Google Calendar and Outlook both let a user publish a secret
+# iCal address from the calendar's own settings, with no app registration and
+# no admin rights. calon reads busy time from it, so a clash is rejected the
+# same way a connected calendar's would be.
+#
+# Two differences from the OAuth providers above, both deliberate:
+#   * read-only — accepted bookings are NOT written into the calendar; the
+#     requester still gets the .ics file and the one-click links.
+#   * eventually consistent — providers refresh a published feed on their own
+#     schedule, which can lag by hours.
+#
+# The same URL can be pasted into the operator dashboard instead of here.
+# A resource uses either a feed or an OAuth connection, never both.
+#
+# [calendars.default]
+# provider = "ics"
+# feed_url = "https://calendar.google.com/calendar/ical/.../basic.ics"
+# enabled = true
+# ---------------------------------------------------------------------------
+
 # [calendars.default]
 # provider = "google"
 # calendar_id = "you@example.com"

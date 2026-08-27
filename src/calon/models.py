@@ -44,6 +44,7 @@ __all__ = [
     "Booking",
     "BookingIntent",
     "CalendarCredentialRow",
+    "CalendarFeedRow",
     "CalendarOAuthClientRow",
     "ResourceRow",
     "UtcDateTime",
@@ -307,6 +308,27 @@ class CalendarOAuthClientRow(Base):
     calendar_id: Mapped[str] = mapped_column(String(255), nullable=False)
     client_id: Mapped[str] = mapped_column(Text, nullable=False)
     client_secret: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    updated_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+
+
+class CalendarFeedRow(Base):
+    """A resource's subscribed ICS calendar URL, entered in the operator dashboard.
+
+    ADR 0017. The third way a resource can get a calendar, alongside a
+    ``[calendars.<slug>]`` entry and :class:`CalendarOAuthClientRow` — and the only one
+    that needs no OAuth app at all, because a published feed's secret URL *is* the
+    credential. Read-only by nature: calon reads busy time from it and never writes.
+
+    The URL is a secret in the same sense a refresh token is (anyone holding it can read
+    the calendar), so it lives under the same care as the rest of ``calon.db`` and is
+    never echoed into a log line or an error message.
+    """
+
+    __tablename__ = "calendar_feed"
+
+    resource_slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
     created_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     updated_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
 

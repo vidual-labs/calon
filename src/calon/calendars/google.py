@@ -81,6 +81,8 @@ class GoogleCalendarProvider(ProviderTransport):
 
     name = "google"
     provider_name = "google"
+    #: A real API-backed calendar: the write-back applies (ADR 0017).
+    writable = True
     token_url = "https://oauth2.googleapis.com/token"
 
     def __init__(

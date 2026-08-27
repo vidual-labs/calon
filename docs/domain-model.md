@@ -297,6 +297,34 @@ both a TOML value and a row here exist, the row wins (it reflects the provider's
 rotation, the TOML value does not). No column-level encryption — see ADR 0014's Decision
 for why, and treat `calon.db` with the same file-permission care as `config/calon.toml`.
 
+### `calendar_oauth_client`
+
+One row per resource whose OAuth **app** credentials were entered in the operator dashboard
+rather than in `config/calon.toml` (ADR 0016).
+
+`resource_slug` (primary key) · `provider` · `calendar_id` · `client_id` · `client_secret` ·
+`created_at_utc` · `updated_at_utc`
+
+Distinct from `calendar_credential` above: that one holds the per-resource *grant* (the
+refresh token), this one the *application* the grant was issued to. A `[calendars.<slug>]`
+entry in `config/calon.toml` always wins over a row here; calon never writes the TOML.
+`provider` is stored rather than assumed so Microsoft 365 can join the dashboard flow later
+without a schema change. No column-level encryption, for the reason ADR 0014 gives for the
+refresh token beside it.
+
+### `calendar_feed`
+
+One row per resource subscribed to a published ICS calendar URL (ADR 0017).
+
+`resource_slug` (primary key) · `url` · `created_at_utc` · `updated_at_utc`
+
+The OAuth-free path: the URL is itself the credential, so a row here makes the resource's
+provider live immediately with no grant to obtain. Read-only — calon reads free/busy from
+the feed and never writes to it, and `CalendarProviderRegistry.writes_back()` reports
+`False` for such a resource so the write-back skips it rather than recording a failure. A
+resource has either a `calendar_feed` row or a `calendar_oauth_client` row, never both; the
+TOML still wins over either.
+
 ## Concurrency
 
 Rule evaluation and insertion happen inside a single `BEGIN IMMEDIATE` transaction, with a

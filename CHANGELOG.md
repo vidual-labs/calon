@@ -12,6 +12,15 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- **Subscribe to a calendar feed — no developer console needed.** If you cannot (or would
+  rather not) register an OAuth app, publish your calendar from its own settings — Google
+  Calendar and Outlook both offer a secret iCal address — and paste that address into the
+  Calendars panel. calon reads your busy times from it and refuses bookings that clash,
+  with the same `PROVIDER_CONFLICT` answer a connected calendar gives. Two things to know:
+  it is **read-only** (accepted bookings still reach your calendar through the .ics link,
+  not by being written in), and published feeds refresh on the provider's own schedule,
+  which can lag by hours. A resource uses either a feed or an OAuth connection, not both.
+  Also configurable as `provider = "ics"` with a `feed_url` in `config/calon.toml`.
 - **You can now connect a Google Calendar entirely from the operator dashboard.** The
   Calendars panel has a form for the OAuth client id and secret, so connecting a resource
   no longer requires editing `config/calon.toml` on the host and restarting: register the

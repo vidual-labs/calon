@@ -96,6 +96,12 @@
         Saved the OAuth client for {{ calendar_saved }}. Now click Connect with Google.
       </div>
     {% endif %}
+    {% if calendar_subscribed %}
+      <div class="flash ok">
+        Subscribed {{ calendar_subscribed }} to the calendar feed. Busy times from it now
+        block bookings; accepted bookings still reach your calendar through the .ics link.
+      </div>
+    {% endif %}
     {% if calendar_error %}
       <div class="flash err">{{ calendar_error }}</div>
     {% endif %}
@@ -130,6 +136,9 @@
             <dd>
               {% if overview.calendars_connected %}
                 <span class="dot on"></span>{{ overview.calendars_connected }} connected
+              {% elif overview.calendars_subscribed %}
+                <span class="dot on"></span>{{ overview.calendars_subscribed }} subscribed
+                (free/busy only)
               {% elif overview.calendars_configured %}
                 <span class="dot"></span>configured, not connected
               {% else %}
@@ -198,8 +207,12 @@
     <section class="panel" id="calendars">
       <h2>Calendars</h2>
       <p class="hint">
-        Optional. calon checks conflicts against its own bookings either way; a connected
-        calendar adds the resource's real free/busy and writes accepted bookings into it.
+        Optional. calon checks conflicts against its own bookings either way. Connecting a
+        calendar with OAuth adds its real free/busy <em>and</em> writes accepted bookings
+        into it; subscribing to a published feed adds free/busy only, and needs no
+        developer console.
+      </p>
+      <p class="hint">
         Google OAuth redirect URI &mdash; register this exact URL as an authorized redirect
         URI on the OAuth client: <span class="mono">{{ google_callback_url }}</span>
       </p>
@@ -209,7 +222,10 @@
             <span class="name">{{ cal.resource_slug }}</span>
             {% if cal.provider %}<span class="provider">{{ cal.provider }}</span>{% endif %}
             {% if cal.calendar_id %}<span class="provider mono">{{ cal.calendar_id }}</span>{% endif %}
-            {% if cal.connected %}
+            {% if cal.read_only %}
+              <span class="status confirmed">Subscribed</span>
+              <span class="provider">free/busy only</span>
+            {% elif cal.connected %}
               <span class="status confirmed">Connected</span>
             {% elif cal.configured %}
               <span class="status none">Not connected</span>
@@ -218,12 +234,18 @@
             {% endif %}
           </div>
           <div>
+            {% if cal.source == "feed" %}
+              <form method="post" action="/calendars/{{ cal.resource_slug }}/feed/forget" style="display:inline">
+                <button type="submit" class="btn secondary">Unsubscribe</button>
+              </form>
+            {% endif %}
             {% if cal.source == "dashboard" %}
               <form method="post" action="/calendars/{{ cal.resource_slug }}/oauth-client/forget" style="display:inline">
                 <button type="submit" class="btn secondary">Forget credentials</button>
               </form>
             {% endif %}
-            {% if cal.connected %}
+            {% if cal.read_only %}
+            {% elif cal.connected %}
               <form method="post" action="/calendars/{{ cal.resource_slug }}/disconnect" style="display:inline">
                 <button type="submit" class="btn secondary">Disconnect</button>
               </form>
@@ -257,6 +279,23 @@
               <input id="calendar_id-{{ cal.resource_slug }}" name="calendar_id"
                      autocomplete="off" spellcheck="false" placeholder="you@example.com">
               <button type="submit" class="btn">Save and enable connecting</button>
+            </form>
+            <hr style="border:none; border-top:1px solid var(--border); margin:18px 0 14px">
+            <ol class="steps">
+              <li><strong>No Google Cloud Console access?</strong> Publish the calendar from
+                its own settings instead &mdash; Google Calendar and Outlook both offer a
+                secret iCal address &mdash; and paste that address here.</li>
+              <li>calon reads busy times from it. This is <em>read-only</em>: it blocks
+                conflicting bookings, but accepted bookings reach your calendar through the
+                .ics link rather than being written in. Published feeds also update on the
+                provider's schedule, which can lag by hours.</li>
+            </ol>
+            <form method="post" action="/calendars/{{ cal.resource_slug }}/feed">
+              <label for="feed_url-{{ cal.resource_slug }}">Secret iCal address</label>
+              <input id="feed_url-{{ cal.resource_slug }}" name="feed_url" required
+                     autocomplete="off" spellcheck="false"
+                     placeholder="https://calendar.google.com/calendar/ical/.../basic.ics">
+              <button type="submit" class="btn secondary">Subscribe to this feed</button>
             </form>
             <details>
               <summary style="margin-top:14px">Prefer the config file?</summary>

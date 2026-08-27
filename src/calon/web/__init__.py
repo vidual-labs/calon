@@ -14,6 +14,8 @@ Routes:
 * ``POST /calendars/{resource_slug}/oauth-client``        — store the OAuth app credentials
   an operator entered in the dashboard (ADR 0016).
 * ``POST /calendars/{resource_slug}/oauth-client/forget``  — drop them again.
+* ``POST /calendars/{resource_slug}/feed``                 — subscribe to a published ICS
+  calendar URL (ADR 0017); ``.../feed/forget`` unsubscribes.
 * ``GET  /calendars/{resource_slug}/connect``    — start the Google connect flow (ADR 0014).
 * ``GET  /calendars/google/callback``            — Google's redirect target.
 * ``POST /calendars/{resource_slug}/disconnect`` — drop a resource's stored credential.
@@ -48,6 +50,7 @@ from calon.models import (
     Booking,
     BookingIntent,
     CalendarCredentialRow,
+    CalendarFeedRow,
     CalendarOAuthClientRow,
 )
 from calon.schemas import BookingIntentIn, CalendarHandoff, CalendarLinksOut, RequesterIn
@@ -394,6 +397,7 @@ def dashboard(
             "google_callback_url": _google_callback_url(settings),
             "calendar_connected": request.query_params.get("calendar_connected"),
             "calendar_saved": request.query_params.get("calendar_saved"),
+            "calendar_subscribed": request.query_params.get("calendar_subscribed"),
             "calendar_error": request.query_params.get("calendar_error"),
         },
     )
@@ -570,6 +574,65 @@ def calendar_oauth_client_forget(
     return RedirectResponse("/bookings#calendars", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/calendars/{resource_slug}/feed", name="calendar_feed_save")
+async def calendar_feed_save(
+    resource_slug: str,
+    request: Request,
+    database: DatabaseDep,
+    calendar_registry: CalendarRegistryDep,
+    _operator: AuthorisedOperator,
+) -> Response:
+    """Subscribe a resource to a published ICS calendar URL (ADR 0017).
+
+    The no-OAuth path: the operator publishes their calendar from its own settings and
+    pastes the secret address here. It goes live immediately — a feed needs no consent
+    round trip, because the URL is the credential — and is read-only, so bookings still
+    reach the calendar through the ``.ics`` handoff rather than a write-back.
+    """
+    config: OperatorConfig = request.app.state.config
+    if resource_slug in config.calendars:
+        return _dashboard_error(
+            f"{resource_slug} is configured in config/calon.toml; edit it there instead"
+        )
+
+    form = await request.form()
+    url = form.get("feed_url", "")
+    try:
+        with database.write() as session:
+            calendar_connect_service.save_feed(
+                session,
+                calendar_registry,
+                resource_slug=resource_slug,
+                url=url if isinstance(url, str) else "",
+                timezone=config.resource.timezone,
+                now=utcnow(),
+            )
+    except calendar_connect_service.CalendarNotConfiguredError as exc:
+        return _dashboard_error(str(exc))
+    except ValueError as exc:  # a URL the provider itself refuses to accept
+        return _dashboard_error(str(exc))
+
+    return RedirectResponse(
+        f"/bookings?calendar_subscribed={quote_plus(resource_slug)}#calendars",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/calendars/{resource_slug}/feed/forget", name="calendar_feed_forget")
+def calendar_feed_forget(
+    resource_slug: str,
+    database: DatabaseDep,
+    calendar_registry: CalendarRegistryDep,
+    _operator: AuthorisedOperator,
+) -> Response:
+    """Unsubscribe a resource from its calendar feed."""
+    with database.write() as session:
+        calendar_connect_service.forget_feed(
+            session, calendar_registry, resource_slug=resource_slug
+        )
+    return RedirectResponse("/bookings#calendars", status_code=status.HTTP_303_SEE_OTHER)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -616,7 +679,8 @@ def _overview(
     when a rule does not behave the way the file was meant to read.
     """
     policy = config.policy
-    connected = sum(1 for row in calendars if row["connected"])
+    subscribed = sum(1 for row in calendars if row["read_only"])
+    connected = sum(1 for row in calendars if row["connected"] and not row["read_only"])
     configured = sum(1 for row in calendars if row["configured"])
     return {
         "instance_name": config.instance_name,
@@ -645,6 +709,7 @@ def _overview(
         ],
         "calendars_configured": configured,
         "calendars_connected": connected,
+        "calendars_subscribed": subscribed,
         "docs_url": "/docs" if settings.docs_enabled else None,
         "api_key_configured": bool(settings.api_key),
     }
@@ -672,8 +737,9 @@ def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict
     guessing from the provider name itself.
     """
     clients = {row.resource_slug: row for row in session.query(CalendarOAuthClientRow).all()}
+    feeds = {row.resource_slug: row for row in session.query(CalendarFeedRow).all()}
     rows: list[dict[str, object]] = []
-    for slug in sorted({config.resource.slug} | set(config.calendars) | set(clients)):
+    for slug in sorted({config.resource.slug} | set(config.calendars) | set(clients) | set(feeds)):
         cfg = calendar_connect_service.resolve_calendar_config(session, config, slug)
         if cfg is None:
             rows.append(
@@ -686,10 +752,14 @@ def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict
                     "connectable": False,
                     "connected": False,
                     "connected_at": None,
+                    "read_only": False,
                 }
             )
             continue
         credential = session.get(CalendarCredentialRow, slug)
+        # A feed carries no OAuth grant: subscribing *is* being connected, which is why
+        # it reports connected without a credential row (ADR 0017).
+        is_feed = cfg.provider == "ics"
         rows.append(
             {
                 "resource_slug": slug,
@@ -698,13 +768,16 @@ def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict
                 # Which source the credentials came from, so the row can offer the right
                 # action: only a dashboard-entered client can be edited or forgotten from
                 # the dashboard (ADR 0016 — the TOML is never written by calon).
-                "source": "config" if slug in config.calendars else "dashboard",
+                "source": (
+                    "config" if slug in config.calendars else ("feed" if is_feed else "dashboard")
+                ),
                 "calendar_id": cfg.calendar_id,
                 "connectable": cfg.provider == "google",
-                "connected": credential is not None,
+                "connected": is_feed or credential is not None,
                 "connected_at": (
                     credential.connected_at_utc.isoformat() if credential is not None else None
                 ),
+                "read_only": is_feed,
             }
         )
     return rows

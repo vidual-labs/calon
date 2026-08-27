@@ -469,3 +469,189 @@ class TestDashboardOAuthClient:
             )
             assert saved.status_code == 401
             assert forgotten.status_code == 401
+
+
+class TestDashboardCalendarFeed:
+    """Subscribing to a published ICS feed — the no-developer-console path (ADR 0017)."""
+
+    FEED_URL = "https://calendar.example.com/secret/basic.ics"
+    #: One busy hour, inside the operator's default window on a Wednesday.
+    FEED_BODY = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\n"
+        "BEGIN:VEVENT\r\nUID:busy@example.com\r\n"
+        "DTSTART:20260902T080000Z\r\nDTEND:20260902T090000Z\r\n"
+        "SUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+
+    @pytest.fixture
+    def standalone(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(
+            db_path=tmp_path / "calon.db",
+            config_path=None,
+            login=LOGIN,
+            base_url="http://testserver",
+        )
+        with (
+            time_machine.travel(NOW, tick=False),
+            TestClient(create_app(settings)) as test_client,
+        ):
+            _log_in(test_client)
+            yield test_client
+
+    @classmethod
+    def _mock_feed_client(cls) -> httpx.Client:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=cls.FEED_BODY.encode("utf-8"))
+
+        return _RealClient(transport=httpx.MockTransport(handler))
+
+    @classmethod
+    def _subscribe(cls, client: TestClient, url: str | None = None) -> httpx.Response:
+        response: httpx.Response = client.post(
+            "/calendars/default/feed",
+            data={"feed_url": url if url is not None else cls.FEED_URL},
+            follow_redirects=False,
+        )
+        return response
+
+    def test_subscribing_goes_live_immediately(self, standalone: TestClient) -> None:
+        """No consent round trip: for a feed, the URL is the credential."""
+        response = self._subscribe(standalone)
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/bookings?calendar_subscribed=default")
+
+        registry = standalone.app.state.calendar_registry  # type: ignore[attr-defined]
+        assert registry.provider_for("default") is not None
+
+        html = standalone.get("/bookings").text
+        assert "Subscribed" in html
+        assert "free/busy only" in html
+        assert "Not configured" not in html
+
+    def test_the_feed_url_is_never_rendered_back(self, standalone: TestClient) -> None:
+        self._subscribe(standalone)
+        assert "secret" not in standalone.get("/bookings").text
+
+    def test_busy_time_from_the_feed_blocks_a_booking(
+        self, standalone: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The whole point: a commitment in the operator's own calendar is respected."""
+        monkeypatch.setattr(
+            "calon.calendars.ics_feed.httpx.Client",
+            lambda *args, **kwargs: self._mock_feed_client(),
+        )
+        self._subscribe(standalone)
+
+        response = standalone.post(
+            "/api/v1/bookings",
+            json={
+                "resource_slug": "default",
+                "start": "2026-09-02T10:00:00+02:00",  # 08:00Z — exactly the busy hour
+                "timezone": "Europe/Berlin",
+                "requester": {"name": "Ada", "email": "ada@example.com"},
+                "subject": "Consultation",
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["decision"]["outcome"] == "rejected"
+        assert body["decision"]["code"] == "PROVIDER_CONFLICT"
+
+    def test_a_free_hour_is_still_bookable(
+        self, standalone: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "calon.calendars.ics_feed.httpx.Client",
+            lambda *args, **kwargs: self._mock_feed_client(),
+        )
+        self._subscribe(standalone)
+
+        response = standalone.post(
+            "/api/v1/bookings",
+            json={
+                "resource_slug": "default",
+                "start": "2026-09-02T14:00:00+02:00",
+                "timezone": "Europe/Berlin",
+                "requester": {"name": "Ada", "email": "ada@example.com"},
+                "subject": "Consultation",
+            },
+        )
+        assert response.status_code == 201, response.text
+        # Nothing was written back: a feed is read-only, so this stays "not synced"
+        # rather than being reported as a failed sync (ADR 0017).
+        assert response.json()["decision"]["calendar_synced"] is False
+
+    def test_unsubscribing_degrades_to_calon_only(self, standalone: TestClient) -> None:
+        self._subscribe(standalone)
+        response = standalone.post("/calendars/default/feed/forget", follow_redirects=False)
+        assert response.status_code == 303
+
+        registry = standalone.app.state.calendar_registry  # type: ignore[attr-defined]
+        assert registry.provider_for("default") is None
+        assert "Not configured" in standalone.get("/bookings").text
+
+    def test_a_url_that_is_not_http_is_refused(self, standalone: TestClient) -> None:
+        response = self._subscribe(standalone, url="file:///etc/passwd")
+        assert response.status_code == 303
+        assert "calendar_error=" in response.headers["location"]
+        assert "Not configured" in standalone.get("/bookings").text
+
+    def test_a_feed_and_an_oauth_client_are_mutually_exclusive(
+        self, standalone: TestClient
+    ) -> None:
+        """One calendar per resource: the operator picks which by removing the other."""
+        self._subscribe(standalone)
+        saved = standalone.post(
+            "/calendars/default/oauth-client",
+            data={"client_id": "cid", "client_secret": "sec", "calendar_id": ""},
+            follow_redirects=False,
+        )
+        assert "calendar_error=" in saved.headers["location"]
+
+        standalone.post("/calendars/default/feed/forget", follow_redirects=False)
+        saved_again = standalone.post(
+            "/calendars/default/oauth-client",
+            data={"client_id": "cid", "client_secret": "sec", "calendar_id": ""},
+            follow_redirects=False,
+        )
+        assert saved_again.headers["location"].startswith("/bookings?calendar_saved=")
+        # …and now the feed form is the one refused.
+        assert "calendar_error=" in self._subscribe(standalone).headers["location"]
+
+    def test_a_toml_configured_resource_refuses_the_feed_form(
+        self, operator_client: TestClient
+    ) -> None:
+        response = self._subscribe(operator_client)
+        assert "calendar_error=" in response.headers["location"]
+
+    def test_the_subscription_survives_a_restart(self, tmp_path: Path) -> None:
+        settings = Settings(
+            db_path=tmp_path / "calon.db",
+            config_path=None,
+            login=LOGIN,
+            base_url="http://testserver",
+        )
+        with time_machine.travel(NOW, tick=False), TestClient(create_app(settings)) as first:
+            _log_in(first)
+            self._subscribe(first)
+
+        with time_machine.travel(NOW, tick=False), TestClient(create_app(settings)) as second:
+            registry = second.app.state.calendar_registry  # type: ignore[attr-defined]
+            provider = registry.provider_for("default")
+            assert provider is not None
+            assert provider.name == "ics"
+
+    def test_requires_the_operator_login(self, tmp_path: Path) -> None:
+        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        with (
+            time_machine.travel(NOW, tick=False),
+            TestClient(create_app(settings)) as anonymous,
+        ):
+            subscribed = anonymous.post(
+                "/calendars/default/feed",
+                data={"feed_url": self.FEED_URL},
+                follow_redirects=False,
+            )
+            forgotten = anonymous.post("/calendars/default/feed/forget", follow_redirects=False)
+            assert subscribed.status_code == 401
+            assert forgotten.status_code == 401
