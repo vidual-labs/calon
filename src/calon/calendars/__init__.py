@@ -97,6 +97,10 @@ class CalendarProvider(Protocol):
     """
 
     name: str
+    #: Whether :meth:`upsert_event` can actually write. ``False`` for a read-only
+    #: source such as a published ICS feed (ADR 0017), which the write-back skips
+    #: rather than auditing a failure for on every booking.
+    writable: bool
 
     def free_busy(
         self,
@@ -238,7 +242,19 @@ class CalendarProviderRegistry:
         provider = self._providers.get(resource_slug)
         if provider is None:
             return
+        if not self.writes_back(resource_slug):
+            return
         provider.upsert_event(resource_slug, event)
+
+    def writes_back(self, resource_slug: str) -> bool:
+        """Whether this resource's provider can be written to at all (ADR 0017).
+
+        A read-only source — a published ICS feed — reports free/busy but has nowhere to
+        put an event. Callers use this to tell "nothing to write" apart from "the write
+        failed", so a feed-connected resource does not audit a sync failure per booking.
+        """
+        provider = self._providers.get(resource_slug)
+        return provider is not None and getattr(provider, "writable", True)
 
     def __len__(self) -> int:
         return len(self._providers)
@@ -246,7 +262,7 @@ class CalendarProviderRegistry:
 
 #: The provider names the instance supports by default; :meth:`CalendarProviderRegistry.
 #: from_config` rejects anything else so the operator finds a missing adapter at boot.
-_SUPPORTED_PROVIDER_NAMES = frozenset({"google", "microsoft"})
+_SUPPORTED_PROVIDER_NAMES = frozenset({"google", "microsoft", "ics"})
 
 
 def _build_provider(provider: str, cfg: CalendarProviderConfig) -> CalendarProvider:
@@ -257,6 +273,15 @@ def _build_provider(provider: str, cfg: CalendarProviderConfig) -> CalendarProvi
     intake registry uses (``SourceRegistry.from_config`` imports its modules only at
     boot, so the package is importable without every adapter).
     """
+    if provider == "ics":
+        from calon.calendars import ics_feed as ics_module
+
+        return ics_module.IcsFeedProvider(
+            resource_slug=cfg.slug,
+            feed_url=cfg.feed_url,
+            timezone=cfg.timezone,
+        )
+
     from calon.calendars.oauth import OAuthCredentials
 
     credentials = OAuthCredentials(client_id=cfg.client_id, client_secret=cfg.client_secret)
@@ -291,6 +316,7 @@ class FakeCalendar:
     """
 
     name = "fake"
+    writable = True
 
     def __init__(self, *, name: str | None = None) -> None:
         if name is not None:

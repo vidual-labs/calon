@@ -33,9 +33,10 @@ from sqlalchemy.orm import Session
 
 from calon.calendars import CalendarProviderRegistry
 from calon.calendars.google import GoogleCalendarProvider, build_authorize_url
+from calon.calendars.ics_feed import IcsFeedProvider
 from calon.calendars.oauth import OAuthCredentials, exchange_authorization_code
 from calon.config import CalendarProviderConfig, OperatorConfig
-from calon.models import CalendarCredentialRow, CalendarOAuthClientRow
+from calon.models import CalendarCredentialRow, CalendarFeedRow, CalendarOAuthClientRow
 from calon.security import new_oauth_state
 
 __all__ = [
@@ -44,8 +45,10 @@ __all__ = [
     "complete_connect",
     "configured_calendars",
     "disconnect",
+    "forget_feed",
     "forget_oauth_client",
     "resolve_calendar_config",
+    "save_feed",
     "save_oauth_client",
     "start_connect",
 ]
@@ -79,16 +82,35 @@ def resolve_calendar_config(
     from_toml = config.calendars.get(resource_slug)
     if from_toml is not None:
         return from_toml
-    row = session.get(CalendarOAuthClientRow, resource_slug)
-    if row is None:
-        return None
+    client_row = session.get(CalendarOAuthClientRow, resource_slug)
+    if client_row is not None:
+        return _client_config(client_row, timezone=config.resource.timezone)
+    feed_row = session.get(CalendarFeedRow, resource_slug)
+    if feed_row is not None:
+        return _feed_config(feed_row, timezone=config.resource.timezone)
+    return None
+
+
+def _client_config(row: CalendarOAuthClientRow, *, timezone: str) -> CalendarProviderConfig:
     return CalendarProviderConfig(
-        slug=resource_slug,
+        slug=row.resource_slug,
         provider=row.provider,
         calendar_id=row.calendar_id,
         enabled=True,
         client_id=row.client_id,
         client_secret=row.client_secret,
+        timezone=timezone,
+    )
+
+
+def _feed_config(row: CalendarFeedRow, *, timezone: str) -> CalendarProviderConfig:
+    return CalendarProviderConfig(
+        slug=row.resource_slug,
+        provider="ics",
+        calendar_id="",
+        enabled=True,
+        feed_url=row.url,
+        timezone=timezone,
     )
 
 
@@ -100,16 +122,12 @@ def configured_calendars(
     Used at boot to build the provider registry, so a resource connected through the
     dashboard keeps working across a restart.
     """
+    timezone = config.resource.timezone
     resolved: dict[str, CalendarProviderConfig] = {}
-    for row in session.query(CalendarOAuthClientRow).all():
-        resolved[row.resource_slug] = CalendarProviderConfig(
-            slug=row.resource_slug,
-            provider=row.provider,
-            calendar_id=row.calendar_id,
-            enabled=True,
-            client_id=row.client_id,
-            client_secret=row.client_secret,
-        )
+    for feed in session.query(CalendarFeedRow).all():
+        resolved[feed.resource_slug] = _feed_config(feed, timezone=timezone)
+    for client in session.query(CalendarOAuthClientRow).all():
+        resolved[client.resource_slug] = _client_config(client, timezone=timezone)
     resolved.update(config.calendars)
     return resolved
 
@@ -163,6 +181,11 @@ def save_oauth_client(
         )
     if not client_id or not client_secret:
         raise CalendarNotConfiguredError("both the client id and the client secret are required")
+    if session.get(CalendarFeedRow, resource_slug) is not None:
+        raise CalendarNotConfiguredError(
+            f"{resource_slug} already subscribes to a calendar feed; remove that first if "
+            "you want to connect the calendar with OAuth instead"
+        )
 
     row = session.get(CalendarOAuthClientRow, resource_slug)
     if row is None:
@@ -202,6 +225,69 @@ def forget_oauth_client(
         return False
     session.delete(row)
     disconnect(session, calendar_registry, resource_slug=resource_slug)
+    return True
+
+
+def save_feed(
+    session: Session,
+    calendar_registry: CalendarProviderRegistry,
+    *,
+    resource_slug: str,
+    url: str,
+    timezone: str,
+    now: datetime,
+) -> None:
+    """Subscribe a resource to a published ICS calendar URL (ADR 0017).
+
+    Unlike an OAuth client, a feed is usable the moment it is stored — the URL *is* the
+    credential — so the provider goes live here rather than after a consent round trip.
+    A resource already set up for OAuth is refused: one calendar per resource, and the
+    operator decides which by removing the other.
+    """
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise CalendarNotConfiguredError(
+            "a calendar feed address must start with http:// or https:// — copy the "
+            "secret iCal address from the calendar's own settings"
+        )
+    if session.get(CalendarOAuthClientRow, resource_slug) is not None:
+        raise CalendarNotConfiguredError(
+            f"{resource_slug} is already set up with an OAuth client; forget those "
+            "credentials first if you want to subscribe to a feed instead"
+        )
+
+    row = session.get(CalendarFeedRow, resource_slug)
+    if row is None:
+        session.add(
+            CalendarFeedRow(
+                resource_slug=resource_slug,
+                url=url,
+                created_at_utc=now,
+                updated_at_utc=now,
+            )
+        )
+    else:
+        row.url = url
+        row.updated_at_utc = now
+
+    calendar_registry.set_provider(
+        resource_slug,
+        IcsFeedProvider(resource_slug=resource_slug, feed_url=url, timezone=timezone),
+    )
+
+
+def forget_feed(
+    session: Session,
+    calendar_registry: CalendarProviderRegistry,
+    *,
+    resource_slug: str,
+) -> bool:
+    """Unsubscribe a resource from its calendar feed, degrading it to calon-only."""
+    row = session.get(CalendarFeedRow, resource_slug)
+    if row is None:
+        return False
+    session.delete(row)
+    calendar_registry.remove_provider(resource_slug)
     return True
 
 

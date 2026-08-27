@@ -22,7 +22,7 @@ closed Saturdays and finds out otherwise from a requester.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, time, timedelta
 from datetime import date as date_cls
 from pathlib import Path
@@ -237,7 +237,11 @@ def _sources(path: Path, raw: dict[str, Any]) -> dict[str, SourceConfig]:
 # provider fails the boot, not a later booking.
 
 
-KNOWN_CALENDAR_PROVIDERS = frozenset({"google", "microsoft"})
+KNOWN_CALENDAR_PROVIDERS = frozenset({"google", "microsoft", "ics"})
+
+#: Providers that authenticate with an OAuth app. ``ics`` deliberately does not: a
+#: published feed URL *is* the credential, which is the whole point of ADR 0017.
+OAUTH_CALENDAR_PROVIDERS = frozenset({"google", "microsoft"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +272,11 @@ class CalendarProviderConfig:
     token. A resource with neither a connected credential nor this field set has no
     working sync until one of the two is provided.
 
+    ``feed_url`` belongs to ``provider = "ics"`` alone: a published ICS URL, read-only,
+    needing no OAuth app at all (ADR 0017). For that provider ``client_id``,
+    ``client_secret``, and ``refresh_token`` are all unused, and the boot check below
+    requires the URL instead of the credential pair.
+
     ``client_id``/``client_secret`` are the OAuth app credentials from the provider's
     developer console (a Google Cloud OAuth client, or an Azure AD app registration) —
     distinct from ``refresh_token``, which is the per-resource grant. Both are required
@@ -285,6 +294,13 @@ class CalendarProviderConfig:
     refresh_token: str = ""
     client_id: str = ""
     client_secret: str = ""
+    #: The published ICS URL, for ``provider = "ics"`` only (ADR 0017). Required for
+    #: that provider and meaningless for the others, which authenticate instead.
+    feed_url: str = ""
+    #: The resource's IANA timezone, carried so a provider that must interpret
+    #: zone-less values (an ICS feed's all-day events) reads them the way the operator
+    #: means them. Set by the wiring from ``[resource] timezone``; never written by hand.
+    timezone: str = "UTC"
 
 
 def _calendars(path: Path, raw: dict[str, Any]) -> dict[str, CalendarProviderConfig]:
@@ -313,6 +329,7 @@ def _calendars(path: Path, raw: dict[str, Any]) -> dict[str, CalendarProviderCon
                 "refresh_token",
                 "client_id",
                 "client_secret",
+                "feed_url",
             }
         )
         _reject_unknown(path, f"calendars.{slug}", entry, allowed)
@@ -335,11 +352,23 @@ def _calendars(path: Path, raw: dict[str, Any]) -> dict[str, CalendarProviderCon
             raise ConfigError(f"{path}: {label}client_id must be a string")
         if "client_secret" in entry and not isinstance(entry["client_secret"], str):
             raise ConfigError(f"{path}: {label}client_secret must be a string")
+        if "feed_url" in entry and not isinstance(entry["feed_url"], str):
+            raise ConfigError(f"{path}: {label}feed_url must be a string")
 
         enabled = entry.get("enabled", True)
         client_id = entry.get("client_id", "")
         client_secret = entry.get("client_secret", "")
-        if enabled and (not client_id or not client_secret):
+        feed_url = entry.get("feed_url", "")
+        if provider == "ics":
+            if enabled and not feed_url:
+                raise ConfigError(
+                    f'{path}: {label}feed_url is required when provider = "ics" and '
+                    "enabled = true; publish the calendar from its own settings and paste "
+                    "the secret ICS address here, or set enabled = false"
+                )
+            if not feed_url.startswith(("http://", "https://")) and feed_url:
+                raise ConfigError(f"{path}: {label}feed_url must be an http:// or https:// URL")
+        elif enabled and (not client_id or not client_secret):
             # Both are required for the provider to ever refresh an access token at
             # all (ADR 0013) — an enabled provider missing either can never actually
             # sync, so this fails the boot rather than degrading silently forever.
@@ -358,6 +387,7 @@ def _calendars(path: Path, raw: dict[str, Any]) -> dict[str, CalendarProviderCon
             refresh_token=entry.get("refresh_token", ""),
             client_id=client_id,
             client_secret=client_secret,
+            feed_url=feed_url,
         )
     return calendars
 
@@ -467,7 +497,10 @@ def load_operator_config(path: Path | None) -> OperatorConfig:
                 organizer_email=_str(path, calendar, "organizer_email", ""),
             ),
             sources=_sources(path, raw),
-            calendars=_calendars(path, raw),
+            calendars={
+                slug: replace(cfg, timezone=resource_tz)
+                for slug, cfg in _calendars(path, raw).items()
+            },
         )
     except ConfigError:
         raise

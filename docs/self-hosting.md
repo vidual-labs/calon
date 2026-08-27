@@ -156,8 +156,49 @@ This is optional and off by default. With no `[calendars.<resource_slug>]` block
 against calon's own bookings only, and the requester gets the `.ics` file plus the Google
 and Outlook deeplinks. That standalone behaviour is the default and is fully available.
 
-To connect a resource's **own** Google Calendar or Microsoft 365 calendar you need an
-**OAuth app** registered with the provider (a Google Cloud OAuth client, or an Azure AD
+There are two ways to connect a resource's **own** calendar, and they differ in what they
+can do and what they cost to set up:
+
+| | Subscribed feed | OAuth connection |
+| --- | --- | --- |
+| Setup | Publish the calendar, paste the URL | Register an OAuth app in the provider's console |
+| Reads busy time | yes | yes |
+| Writes accepted bookings | **no** (.ics handoff only) | yes |
+| Freshness | the provider's own publish schedule (can lag hours) | live |
+| Providers | Google, Microsoft 365, anything publishing ICS | Google (dashboard), Microsoft 365 (out-of-band) |
+
+Start with the feed if you have no developer-console access, or no wish to get any; use the
+OAuth connection when you want bookings written into the calendar automatically.
+
+### Subscribing to a published calendar feed
+
+No app registration, no admin rights, no restart. In the calendar's own settings, publish
+it and copy the **secret iCal address** (Google Calendar: Settings → *Settings for my
+calendars* → the calendar → *Secret address in iCal format*; Outlook / Microsoft 365:
+*Publish a calendar* → the ICS link). Paste that address into the **Calendars** panel on
+the operator dashboard and click *Subscribe to this feed*.
+
+calon then reads busy time from it and rejects clashing requests with `PROVIDER_CONFLICT`,
+exactly like a connected calendar. It is **read-only**: accepted bookings reach your
+calendar through the `.ics` file and the one-click links, not by being written in. Anyone
+holding the URL can read your calendar, so treat it as a secret — it is stored in
+`calon.db` and never shown again.
+
+The same thing in the config file, if you prefer:
+
+```toml
+[calendars.default]
+provider = "ics"
+feed_url = "https://calendar.google.com/calendar/ical/.../basic.ics"
+enabled = true
+```
+
+A resource uses either a feed or an OAuth connection, never both.
+
+### Connecting with OAuth
+
+To connect a resource's **own** Google Calendar or Microsoft 365 calendar this way you need
+an **OAuth app** registered with the provider (a Google Cloud OAuth client, or an Azure AD
 app registration). For **Google**, its `client_id` and `client_secret` can go either into
 the config file or straight into the operator dashboard (ADR 0016) — the dashboard path
 needs no file edit and no restart, which is the one to use on a container or a managed

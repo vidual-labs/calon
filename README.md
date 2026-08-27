@@ -268,7 +268,13 @@ calendar. When enabled, two things happen:
   matching event on the connected calendar (amendments update it), so the operator does not
   copy the booking into their calendar by hand.
 
-The connection is opt-in, per resource. A **Google** resource can be set up entirely from
+The connection is opt-in, per resource, and there are two shapes of it. The simplest needs
+**no developer console at all**: publish the calendar from its own settings (Google Calendar
+and Outlook both offer a secret iCal address) and paste that address into the Calendars
+panel. calon reads busy time from it and rejects clashes — read-only, and as fresh as the
+provider publishes it.
+
+For a live, two-way connection: a **Google** resource can be set up entirely from
 the operator dashboard: register an OAuth client in Google Cloud Console with the redirect
 URI the Calendars panel prints, paste its `client_id` and `client_secret` into the panel,
 and click **Connect with Google** — calon runs the OAuth exchange and stores the refresh
@@ -286,7 +292,9 @@ See [ADR 0009](docs/adr/0009-optional-resource-calendar-sync.md) for the decisio
 client and credential-storage choices, [ADR 0014](docs/adr/0014-operator-initiated-google-connect-flow.md)
 for the dashboard connect flow,
 [ADR 0016](docs/adr/0016-dashboard-entered-oauth-client-credentials.md) for entering the
-OAuth client in the dashboard, and the self-hosting doc for exact setup steps.
+OAuth client in the dashboard,
+[ADR 0017](docs/adr/0017-subscribed-ics-calendar-feed.md) for the subscribed feed, and the
+self-hosting doc for exact setup steps.
 
 ## Roadmap
 

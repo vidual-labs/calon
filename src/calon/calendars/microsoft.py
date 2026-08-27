@@ -68,6 +68,8 @@ class MicrosoftGraphProvider(ProviderTransport):
 
     name = "microsoft"
     provider_name = "microsoft"
+    #: A real API-backed calendar: the write-back applies (ADR 0017).
+    writable = True
     token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 
     def __init__(
