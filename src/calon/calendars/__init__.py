@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -144,6 +144,7 @@ class CalendarProviderRegistry:
         configs: dict[str, CalendarProviderConfig],
         supported: frozenset[str] | None = None,
         build: Callable[[str, CalendarProviderConfig], CalendarProvider] | None = None,
+        refresh_token_overrides: dict[str, str] | None = None,
     ) -> CalendarProviderRegistry:
         """Build the registry from the operator config.
 
@@ -152,8 +153,14 @@ class CalendarProviderRegistry:
         so the operator does not discover a missing adapter at lunchtime. An
         ``enabled = false`` entry is skipped (config kept for reference, no provider
         built), mirroring the SourceRegistry behaviour.
+
+        ``refresh_token_overrides`` is the boot-time read of the ``calendar_credential``
+        table (ADR 0014): a resource connected through the operator dashboard has its
+        refresh token there, and it takes precedence over the TOML's ``refresh_token``,
+        which is only a bootstrap seed once a real connection exists.
         """
         supported = supported if supported is not None else _SUPPORTED_PROVIDER_NAMES
+        overrides = refresh_token_overrides or {}
         providers: dict[str, CalendarProvider] = {}
         for slug, cfg in configs.items():
             if not cfg.enabled:
@@ -164,13 +171,30 @@ class CalendarProviderRegistry:
                     "instance has no adapter module for it; set enabled = false or "
                     "remove the table"
                 )
+            override_token = overrides.get(slug)
+            effective_cfg = replace(cfg, refresh_token=override_token) if override_token else cfg
             builder = build if build is not None else _build_provider
-            providers[slug] = builder(cfg.provider, cfg)
+            providers[slug] = builder(cfg.provider, effective_cfg)
         return cls(providers)
 
     def provider_for(self, resource_slug: str) -> CalendarProvider | None:
         """The provider for this resource, or ``None`` if the resource has no sync."""
         return self._providers.get(resource_slug)
+
+    def set_provider(self, resource_slug: str, provider: CalendarProvider) -> None:
+        """Install or replace a resource's provider at runtime (the connect flow, ADR 0014).
+
+        The registry is normally built once at boot and treated as read-only for the rest
+        of the process (mirroring ``SourceRegistry``). A connection made through the
+        operator dashboard must take effect on the very next availability check or
+        write-back, without a restart — that immediacy is the point of the button — so
+        this is the one mutator outside :meth:`from_config` that touches ``_providers``.
+        """
+        self._providers[resource_slug] = provider
+
+    def remove_provider(self, resource_slug: str) -> None:
+        """Drop a resource's provider at runtime (disconnect, ADR 0014). A no-op if absent."""
+        self._providers.pop(resource_slug, None)
 
     def free_busy(
         self,

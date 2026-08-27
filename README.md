@@ -267,17 +267,21 @@ calendar. When enabled, two things happen:
   matching event on the connected calendar (amendments update it), so the operator does not
   copy the booking into their calendar by hand.
 
-The connection is opt-in, per resource, in `config/calon.toml` (one
-`[calendars.<resource_slug>]` block: provider, calendar id, and an out-of-band refresh
-token — calon does not perform OAuth). If the provider API is unreachable or errors,
-calon **degrades to its own database** as the sole source of truth for that request rather
-than failing the booking — an unreachable calendar makes availability less accurate, it
-does not take booking down.
+The connection is opt-in, per resource, configured in `config/calon.toml` (one
+`[calendars.<resource_slug>]` block naming the provider and the OAuth app's `client_id`/
+`client_secret`). From there, a Google resource can be connected with one click — the
+operator dashboard has a **"Connect with Google"** button that runs the OAuth exchange and
+stores the resulting refresh token itself, no restart required. Microsoft 365, and Google
+setups that prefer a scripted/headless install, still use the out-of-band flow: obtain a
+refresh token once outside calon and paste it into the same config block. If the provider
+API is unreachable or errors, calon **degrades to its own database** as the sole source of
+truth for that request rather than failing the booking — an unreachable calendar makes
+availability less accurate, it does not take booking down.
 
 See [ADR 0009](docs/adr/0009-optional-resource-calendar-sync.md) for the decision,
 [ADR 0013](docs/adr/0013-minimal-http-client-and-sqlite-credential-store.md) for the
-client and credential-storage choices, and the self-hosting doc for how to obtain a
-refresh token for Google or Microsoft.
+client and credential-storage choices, [ADR 0014](docs/adr/0014-operator-initiated-google-connect-flow.md)
+for the dashboard connect flow, and the self-hosting doc for exact setup steps.
 
 ## Roadmap
 

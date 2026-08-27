@@ -26,7 +26,7 @@ import httpx
 import pytest
 
 from calon.calendars import CalendarEvent, CalendarProviderError
-from calon.calendars.google import GoogleCalendarProvider, _google_event_id
+from calon.calendars.google import GoogleCalendarProvider, _google_event_id, build_authorize_url
 from calon.calendars.oauth import OAuthCredentials
 from calon.domain import FreeBusySpan
 
@@ -237,3 +237,30 @@ class TestUpsertHttp:
         # Idempotency (ADR 0009): a re-run of the write-back for the same booking
         # must address the same Google event every time.
         assert _google_event_id(self.UID) == _google_event_id(self.UID)
+
+
+class TestBuildAuthorizeUrl:
+    """The consent-screen URL for the operator-initiated connect flow (ADR 0014)."""
+
+    def test_the_url_carries_every_required_parameter(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        url = build_authorize_url(
+            client_id="cid-123",
+            redirect_uri="https://calon.example.com/calendars/google/callback",
+            state="signed-state-value",
+        )
+        parts = urlsplit(url)
+        assert f"{parts.scheme}://{parts.netloc}{parts.path}" == (
+            "https://accounts.google.com/o/oauth2/v2/auth"
+        )
+        params = parse_qs(parts.query)
+        assert params["client_id"] == ["cid-123"]
+        assert params["redirect_uri"] == ["https://calon.example.com/calendars/google/callback"]
+        assert params["response_type"] == ["code"]
+        assert params["scope"] == ["https://www.googleapis.com/auth/calendar.events"]
+        # Both are required to guarantee a refresh token on every connect, not just the
+        # first time a given Google account ever authorizes this OAuth client.
+        assert params["access_type"] == ["offline"]
+        assert params["prompt"] == ["consent"]
+        assert params["state"] == ["signed-state-value"]

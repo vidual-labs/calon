@@ -263,3 +263,65 @@ class TestRegistryIntegration:
             CalendarProviderRegistry.from_config(
                 config.calendars, supported=frozenset({"microsoft"})
             )
+
+    def test_a_db_refresh_token_override_takes_precedence_over_the_toml_value(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        # ADR 0014: a resource connected through the operator dashboard has its refresh
+        # token in the calendar_credential table; that value must win over whatever
+        # bootstrap value (if any) sits in the TOML.
+        body = (
+            BASE + f'\n[calendars.g]\nprovider = "google"\n{CREDS}\nrefresh_token = "toml-seed"\n'
+        )
+        config = _load(tmp_path, body)
+        registry = CalendarProviderRegistry.from_config(
+            config.calendars,
+            build=lambda name, cfg: FakeCalendar(name=cfg.refresh_token),
+            refresh_token_overrides={"g": "db-connected-token"},
+        )
+        provider = registry.provider_for("g")
+        assert isinstance(provider, FakeCalendar)
+        assert provider.name == "db-connected-token"
+
+    def test_no_override_falls_back_to_the_toml_refresh_token(self, tmp_path: pathlib.Path) -> None:
+        body = (
+            BASE + f'\n[calendars.g]\nprovider = "google"\n{CREDS}\nrefresh_token = "toml-seed"\n'
+        )
+        config = _load(tmp_path, body)
+        registry = CalendarProviderRegistry.from_config(
+            config.calendars,
+            build=lambda name, cfg: FakeCalendar(name=cfg.refresh_token),
+            refresh_token_overrides={"other-resource": "unrelated"},
+        )
+        provider = registry.provider_for("g")
+        assert isinstance(provider, FakeCalendar)
+        assert provider.name == "toml-seed"
+
+
+class TestRegistryMutators:
+    """The runtime mutators the connect flow uses to go live without a restart (ADR 0014)."""
+
+    def test_set_provider_installs_a_new_resource(self) -> None:
+        registry = CalendarProviderRegistry()
+        assert registry.provider_for("default") is None
+        provider = FakeCalendar()
+        registry.set_provider("default", provider)
+        assert registry.provider_for("default") is provider
+        assert len(registry) == 1
+
+    def test_set_provider_replaces_an_existing_one(self) -> None:
+        old = FakeCalendar(name="old")
+        registry = CalendarProviderRegistry({"default": old})
+        new = FakeCalendar(name="new")
+        registry.set_provider("default", new)
+        assert registry.provider_for("default") is new
+
+    def test_remove_provider_drops_the_resource(self) -> None:
+        registry = CalendarProviderRegistry({"default": FakeCalendar()})
+        registry.remove_provider("default")
+        assert registry.provider_for("default") is None
+
+    def test_remove_provider_on_an_absent_resource_is_a_no_op(self) -> None:
+        registry = CalendarProviderRegistry()
+        registry.remove_provider("does-not-exist")  # must not raise
+        assert registry.provider_for("does-not-exist") is None

@@ -7,7 +7,7 @@ isolation, where the eviction behaviour below is otherwise untested.
 
 from __future__ import annotations
 
-from calon.security import SessionTable
+from calon.security import SessionTable, new_oauth_state, verify_oauth_state
 
 KEY = b"0" * 32
 
@@ -68,3 +68,43 @@ class TestSessionTable:
         assert len(table) == 2
         assert table.is_valid(first, now=1001.0)
         assert table.is_valid(second, now=1001.0)
+
+
+class TestOAuthState:
+    """The signed ``state`` value used by the calendar connect flow (ADR 0014)."""
+
+    def test_a_freshly_issued_state_verifies_to_its_resource_slug(self) -> None:
+        state = new_oauth_state(KEY, "default", now=1000.0)
+        assert verify_oauth_state(KEY, state, now=1000.0) == "default"
+
+    def test_a_state_signed_with_a_different_key_is_rejected(self) -> None:
+        state = new_oauth_state(KEY, "default", now=1000.0)
+        other_key = b"1" * 32
+        assert verify_oauth_state(other_key, state, now=1000.0) is None
+
+    def test_a_tampered_state_is_rejected(self) -> None:
+        state = new_oauth_state(KEY, "default", now=1000.0)
+        payload, signature = state.rsplit(".", 1)
+        tampered = f"{payload}x.{signature}"
+        assert verify_oauth_state(KEY, tampered, now=1000.0) is None
+
+    def test_a_state_outside_the_ttl_window_is_rejected(self) -> None:
+        state = new_oauth_state(KEY, "default", now=1000.0)
+        assert verify_oauth_state(KEY, state, ttl_seconds=600, now=1600.0) == "default"
+        assert verify_oauth_state(KEY, state, ttl_seconds=600, now=1601.0) is None
+
+    def test_a_state_from_the_future_beyond_the_window_is_also_rejected(self) -> None:
+        # Guards against a state minted with a clock far ahead of this process's clock.
+        state = new_oauth_state(KEY, "default", now=2000.0)
+        assert verify_oauth_state(KEY, state, ttl_seconds=600, now=1000.0) is None
+
+    def test_a_malformed_state_is_rejected_rather_than_raising(self) -> None:
+        assert verify_oauth_state(KEY, "not-a-real-state") is None
+        assert verify_oauth_state(KEY, "") is None
+        assert verify_oauth_state(KEY, "onlyonepart") is None
+
+    def test_the_resource_slug_round_trips_even_with_a_colon_in_the_payload_split(self) -> None:
+        # rsplit(":", 1) is used to separate the slug from the timestamp, so a slug is
+        # safe even though the payload format itself uses ":" as a separator.
+        state = new_oauth_state(KEY, "my-resource", now=1000.0)
+        assert verify_oauth_state(KEY, state, now=1000.0) == "my-resource"

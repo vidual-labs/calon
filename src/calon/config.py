@@ -228,12 +228,13 @@ def _sources(path: Path, raw: dict[str, Any]) -> dict[str, SourceConfig]:
 #
 # The operator-facing shape carries only what the config file legitimately holds: which
 # provider, which calendar, the calendar id on the provider side, and (optionally) an
-# already-obtained refresh token for bootstrapping when the operator has not yet set up a
-# token exchange. The operator's *runtime* credentials are stored in SQLite by the
-# provider, not in the file (ADR 0013, to be written in Batch 6 / PR discussion). This
-# dataclass is the operator-facing shape, parsed at startup (never mid-request), and the
-# per-calendar invariants are checked here so a misconfigured provider fails the boot,
-# not a later booking.
+# already-obtained refresh token for bootstrapping when the operator has not yet connected
+# through the dashboard. For Google, a resource can instead (or additionally) be connected
+# via the operator dashboard's "Connect with Google" button, which stores its own refresh
+# token in the ``calendar_credential`` table and takes precedence over this file's value
+# (ADR 0014). This dataclass is the operator-facing shape, parsed at startup (never
+# mid-request), and the per-calendar invariants are checked here so a misconfigured
+# provider fails the boot, not a later booking.
 
 
 KNOWN_CALENDAR_PROVIDERS = frozenset({"google", "microsoft"})
@@ -259,13 +260,13 @@ class CalendarProviderConfig:
     later re-enable (mirroring :class:`SourceConfig.enabled`).
 
     ``refresh_token`` is optional and operator-facing: it seeds the provider's token
-    store on boot so a connection can be established without an interactive OAuth
-    round-trip. Once the provider has refreshed once, the in-memory rotated refresh
-    token (not this file value) is used for the rest of *that process's* run — but
-    it is held only in memory (ADR 0013: no credential store), so a restart discards
-    it and reads this file's value again. A provider that rotates its refresh token
-    on every use (as Google's may) can therefore go stale across a restart; if that
-    happens, re-run the out-of-band OAuth exchange and update this value.
+    store on boot for the out-of-band setup (ADR 0013) — obtain it once, outside calon,
+    and paste it in. For Google, the operator dashboard's "Connect with Google" button
+    (ADR 0014) is the alternative to this field: it stores its own refresh token in the
+    ``calendar_credential`` table, which takes precedence over this file's value at boot
+    and, unlike this field, is kept up to date automatically when the provider rotates the
+    token. A resource with neither a connected credential nor this field set has no
+    working sync until one of the two is provided.
 
     ``client_id``/``client_secret`` are the OAuth app credentials from the provider's
     developer console (a Google Cloud OAuth client, or an Azure AD app registration) —

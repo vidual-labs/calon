@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
+from urllib.parse import urlencode
 
 import httpx
 
@@ -38,6 +39,34 @@ from calon.calendars.oauth import (
 )
 
 _API_BASE = "https://www.googleapis.com/calendar/v3"
+
+#: Google's OAuth 2.0 consent-screen endpoint (ADR 0014's connect flow).
+AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+#: Matches the scope requested by the out-of-band flow documented in
+#: ``docs/self-hosting.md`` — the connect flow asks for the same access, no more.
+SCOPE = "https://www.googleapis.com/auth/calendar.events"
+
+
+def build_authorize_url(*, client_id: str, redirect_uri: str, state: str) -> str:
+    """The consent-screen URL for one operator-initiated connect round trip (ADR 0014).
+
+    ``access_type=offline`` plus ``prompt=consent`` is what makes Google issue a refresh
+    token on *every* connect, not only the first authorization a given Google account ever
+    grants that OAuth client — without ``prompt=consent``, an operator reconnecting after
+    revoking access in their Google account would get an access token and no refresh
+    token, and :func:`calon.calendars.oauth.exchange_authorization_code` would reject the
+    exchange as incomplete.
+    """
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": SCOPE,
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state,
+    }
+    return f"{AUTHORIZE_URL}?{urlencode(params)}"
 
 
 class GoogleCalendarProvider(ProviderTransport):

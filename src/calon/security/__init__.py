@@ -7,7 +7,7 @@ multi-tenancy: the requester does not log in to book, the operator does. This is
 smallest thing that keeps personal data behind a gate, and it keeps calon standalone-first
 (``CLAUDE.md`` §2, ADR 0010).
 
-The two primitives here are both stdlib on purpose — no new dependency (``CLAUDE.md`` §8):
+The primitives here are all stdlib on purpose — no new dependency (``CLAUDE.md`` §8):
 
 * **Password hash** — PBKDF2-HMAC-SHA256, 200 000 iterations, a per-hash random salt.
   Verification is constant-time via :func:`hmac.compare_digest`, so a wrong key costs the
@@ -15,6 +15,9 @@ The two primitives here are both stdlib on purpose — no new dependency (``CLAU
 * **Session** — a server-side opaque token, stored in-process and signed so a cookie that
   has been copied and replayed after a restart (or after the key is rotated) is rejected.
   The token itself carries no data; the server holds the mapping in a process-local table.
+* **OAuth connect state** (:func:`new_oauth_state`/:func:`verify_oauth_state`) — a signed,
+  timestamped value the calendar connect flow (ADR 0014) round-trips through the
+  provider's own redirect, so the callback can trust it without a server-side state store.
 """
 
 from __future__ import annotations
@@ -32,7 +35,9 @@ __all__ = [
     "SessionTable",
     "derive_login_key",
     "format_password_hash",
+    "new_oauth_state",
     "new_session_token",
+    "verify_oauth_state",
     "verify_password_hash",
 ]
 
@@ -187,6 +192,58 @@ class SessionTable:
 
     def __len__(self) -> int:
         return len(self._records)
+
+
+#: How long an OAuth connect round trip (redirect to the provider, consent, redirect back)
+#: is allowed to take. Ten minutes is generous for a human on a consent screen and short
+#: enough that a leaked callback URL is worthless soon after.
+_OAUTH_STATE_TTL_SECONDS = 600
+
+
+def new_oauth_state(signing_key: bytes, resource_slug: str, *, now: float | None = None) -> str:
+    """A signed, timestamped ``state`` value for one calendar-connect round trip (ADR 0014).
+
+    HMAC-signed with the operator's own derived key (:func:`derive_login_key`) rather than
+    remembered server-side: the value travels to the provider and back inside the
+    browser's own redirect, and :func:`verify_oauth_state` checks the signature and the
+    time window on return. This mirrors how the external-intake framework already signs a
+    payload instead of keeping a matching state store (``CLAUDE.md`` §10) — no new
+    session-state storage for a value that only needs to prove "this callback follows a
+    connect request calon itself issued, recently."
+    """
+    timestamp = str(int(now if now is not None else time.time()))
+    payload = f"{resource_slug}:{timestamp}"
+    signature = hmac.new(signing_key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{_b64(payload.encode('utf-8'))}.{signature}"
+
+
+def verify_oauth_state(
+    signing_key: bytes,
+    state: str,
+    *,
+    ttl_seconds: int = _OAUTH_STATE_TTL_SECONDS,
+    now: float | None = None,
+) -> str | None:
+    """The resource slug a ``state`` value was issued for, or ``None`` if it does not check out.
+
+    Rejects a bad signature, a malformed value, and one outside the time window
+    (``ttl_seconds`` either side, so a small clock skew is tolerated but a stale or replayed
+    link is not accepted indefinitely).
+    """
+    try:
+        encoded_payload, signature = state.split(".", 1)
+        payload = _unb64(encoded_payload).decode("utf-8")
+        resource_slug, timestamp_text = payload.rsplit(":", 1)
+        timestamp = int(timestamp_text)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    expected = hmac.new(signing_key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        return None
+    current = now if now is not None else time.time()
+    if abs(current - timestamp) > ttl_seconds:
+        return None
+    return resource_slug
 
 
 class LoginStore:
