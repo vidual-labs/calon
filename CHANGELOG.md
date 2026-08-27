@@ -25,6 +25,10 @@ per user-visible change, describing the effect rather than the implementation.
   connected provider's OAuth app credentials. Previously there was nowhere to
   configure them, so a connected Google Calendar or Microsoft 365 calendar could
   never actually refresh an access token and every sync attempt failed silently.
+- The operator dashboard's header now has a **Bookings** / **Calendars** navigation menu
+  (the Calendars link only appears once at least one `[calendars.<slug>]` resource is
+  configured), so the Connect-with-Google panel is one click away from anywhere in the
+  operator area instead of requiring a scroll to find.
 
 ### Changed
 

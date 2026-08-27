@@ -16,6 +16,8 @@
     header .brand span { color:var(--dim); font-weight:400; font-size:13px; margin-left:8px; }
     header nav a { margin-left:16px; color:var(--dim); text-decoration:none; font-size:13px; }
     header nav a:hover { color:var(--fg); }
+    header nav a.current { color:var(--fg); font-weight:600; }
+    header nav .sep { margin-left:16px; padding-left:16px; border-left:1px solid var(--border); }
     main { padding:28px; max-width:960px; margin:0 auto; }
     h2 { font-size:16px; font-weight:600; margin:0 0 16px; }
     table { width:100%; border-collapse:collapse; }
@@ -52,9 +54,13 @@
   <header>
     <div class="brand">calon <span>operator</span></div>
     <nav>
-      <a href="{{ instance_url }}">API base</a>
+      <a href="/bookings" class="current">Bookings</a>
+      {% if calendars %}
+        <a href="/bookings#calendars">Calendars</a>
+      {% endif %}
+      <span class="sep"><a href="{{ instance_url }}">API base</a></span>
       <form method="post" action="/logout" style="display:inline">
-        <button type="submit" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:13px;padding:0">Log out</button>
+        <button type="submit" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:13px;padding:0 0 0 16px">Log out</button>
       </form>
     </nav>
   </header>
@@ -67,7 +73,7 @@
     {% endif %}
 
     {% if calendars %}
-      <section class="panel">
+      <section class="panel" id="calendars">
         <h2>Calendars</h2>
         {% for cal in calendars %}
           <div class="cal-row">
