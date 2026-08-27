@@ -356,13 +356,19 @@ def dashboard(
     settings: SettingsDep,
     _operator: AuthorisedOperator,
 ) -> HTMLResponse:
-    """List every booking intent (accepted or rejected), newest first.
+    """The operator's home: what this instance does, its calendars, and every booking.
 
     Gated by the operator's login (the ``AuthorisedOperator`` dependency). A request
-    without a valid session or API key gets a ``401``. Also shows every configured
-    ``[calendars.<slug>]`` resource with its connect status (ADR 0014) — but only if at
-    least one is configured, so a standalone instance with nothing set up sees no
-    calendars panel at all.
+    without a valid session or API key gets a ``401``.
+
+    Three panels, in the order an operator needs them: an **overview** of every function
+    the instance exposes and the rules currently in force (read from
+    ``config/calon.toml`` at startup), the **calendars** panel with each resource's
+    connect status (ADR 0014), and the **bookings** list. The calendars panel is shown
+    even when nothing is configured — it then explains how to set a calendar up, rather
+    than leaving the operator with no way to discover the feature. That is a
+    discoverability affordance only: a resource with no ``[calendars.<slug>]`` entry
+    still has no provider, and the booking flow is untouched (CLAUDE.md §2).
     """
     config: OperatorConfig = request.app.state.config
     with database.read() as session:
@@ -375,6 +381,7 @@ def dashboard(
         context={
             "intents": intents,
             "instance_url": settings.base_url,
+            "overview": _overview(config, settings, calendars),
             "calendars": calendars,
             "google_callback_url": _google_callback_url(settings),
             "calendar_connected": request.query_params.get("calendar_connected"),
@@ -521,20 +528,87 @@ def _error_html(message: str) -> str:
     )
 
 
+_WEEKDAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _overview(
+    config: OperatorConfig, settings: Settings, calendars: list[dict[str, object]]
+) -> dict[str, object]:
+    """What this instance does, and under which rules — the operator's orientation panel.
+
+    Everything here is read straight from the already-loaded config; the panel is a view
+    of ``config/calon.toml`` as calon actually parsed it, which is what makes it useful
+    when a rule does not behave the way the file was meant to read.
+    """
+    policy = config.policy
+    connected = sum(1 for row in calendars if row["connected"])
+    configured = sum(1 for row in calendars if row["configured"])
+    return {
+        "instance_name": config.instance_name,
+        "resource_name": config.resource_name,
+        "resource_slug": config.resource.slug,
+        "timezone": config.resource.timezone,
+        "weekdays": ", ".join(_WEEKDAY_NAMES[day] for day in sorted(policy.allowed_weekdays)),
+        "window": f"{policy.window_start:%H:%M}-{policy.window_end:%H:%M}",
+        "default_duration_min": policy.default_duration_min,
+        "slot_granularity_min": policy.slot_granularity_min,
+        "min_notice_min": policy.min_notice_min,
+        "max_advance_days": policy.max_advance_days,
+        "buffer_before_min": policy.buffer_before_min,
+        "buffer_after_min": policy.buffer_after_min,
+        "max_bookings_per_day": policy.max_bookings_per_day,
+        "blackout_count": len(config.blackouts),
+        "event_title": config.calendar.event_title,
+        "sources": [
+            {
+                "slug": slug,
+                "enabled": source.enabled,
+                "resource_slug": source.resource_slug,
+                "endpoint": f"/api/v1/{slug}",
+            }
+            for slug, source in sorted(config.sources.items())
+        ],
+        "calendars_configured": configured,
+        "calendars_connected": connected,
+        "docs_url": "/docs" if settings.docs_enabled else None,
+        "api_key_configured": bool(settings.api_key),
+    }
+
+
 def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict[str, object]]:
-    """One row per configured ``[calendars.<slug>]`` entry, with its connect status.
+    """One row per resource, whether or not it has a ``[calendars.<slug>]`` entry.
+
+    A resource with no entry gets a ``configured = False`` row so the dashboard can show
+    the operator how to set one up, instead of the feature being invisible until the
+    config file already has it. That row carries no provider and no action — it is a
+    signpost, not a second way to configure calon (``config/calon.toml`` stays
+    authoritative, ADR 0008).
 
     ``connectable`` distinguishes Google (has a connect button) from Microsoft (out-of-band
     only, per ADR 0014's scope) so the template can render the right action without
     guessing from the provider name itself.
     """
     rows: list[dict[str, object]] = []
-    for slug, cfg in sorted(config.calendars.items()):
+    for slug in sorted({config.resource.slug} | set(config.calendars)):
+        cfg = config.calendars.get(slug)
+        if cfg is None:
+            rows.append(
+                {
+                    "resource_slug": slug,
+                    "provider": None,
+                    "configured": False,
+                    "connectable": False,
+                    "connected": False,
+                    "connected_at": None,
+                }
+            )
+            continue
         credential = session.get(CalendarCredentialRow, slug)
         rows.append(
             {
                 "resource_slug": slug,
                 "provider": cfg.provider,
+                "configured": True,
                 "connectable": cfg.provider == "google",
                 "connected": credential is not None,
                 "connected_at": (

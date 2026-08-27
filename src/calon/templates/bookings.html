@@ -48,17 +48,31 @@
     .flash { padding:10px 14px; border-radius:6px; font-size:13px; margin-bottom:16px; }
     .flash.ok { background:rgba(81,207,102,.14); color:var(--ok); }
     .flash.err { background:rgba(255,107,107,.14); color:#ff6b6b; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:20px; }
+    .grid h3 { font-size:12px; text-transform:uppercase; letter-spacing:.06em;
+               color:var(--dim); font-weight:600; margin:0 0 8px; }
+    dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:13px; }
+    dt { color:var(--dim); }
+    dd { margin:0; }
+    .hint { color:var(--dim); font-size:12px; margin:0 0 12px; }
+    .hint code, pre { font-family:"SF Mono",Monaco,Menlo,Consolas,monospace; }
+    pre { background:var(--bg); border:1px solid var(--border); border-radius:6px;
+          padding:10px 12px; font-size:12px; overflow-x:auto; margin:10px 0 0; }
+    details { margin-top:8px; }
+    summary { cursor:pointer; color:var(--accent); font-size:13px; }
+    .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:7px;
+           background:var(--muted); vertical-align:middle; }
+    .dot.on { background:var(--ok); }
   </style>
 </head>
 <body>
   <header>
     <div class="brand">calon <span>operator</span></div>
     <nav>
-      <a href="/bookings" class="current">Bookings</a>
-      {% if calendars %}
-        <a href="/bookings#calendars">Calendars</a>
-      {% endif %}
-      <span class="sep"><a href="{{ instance_url }}">API base</a></span>
+      <a href="/bookings#overview" class="current">Overview</a>
+      <a href="/bookings#calendars">Calendars</a>
+      <a href="/bookings#bookings">Bookings</a>
+      <span class="sep"><a href="/book">Booking form</a></span>
       <form method="post" action="/logout" style="display:inline">
         <button type="submit" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:13px;padding:0 0 0 16px">Log out</button>
       </form>
@@ -72,41 +86,157 @@
       <div class="flash err">{{ calendar_error }}</div>
     {% endif %}
 
-    {% if calendars %}
-      <section class="panel" id="calendars">
-        <h2>Calendars</h2>
-        <p style="color:var(--dim); font-size:12px; margin:0 0 12px;">
-          Google OAuth redirect URI &mdash; register this exact URL as an authorized
-          redirect URI on the OAuth client: <span class="mono">{{ google_callback_url }}</span>
-        </p>
-        {% for cal in calendars %}
-          <div class="cal-row">
-            <div>
-              <span class="name">{{ cal.resource_slug }}</span>
-              <span class="provider">{{ cal.provider }}</span>
-              {% if cal.connected %}
-                <span class="status confirmed">Connected</span>
+    <section class="panel" id="overview">
+      <h2>Overview</h2>
+      <p class="hint">
+        What this instance does, and the rules currently in force. Rules are read from
+        <code>config/calon.toml</code> at startup &mdash; restart calon to apply a change.
+      </p>
+      <div class="grid">
+        <div>
+          <h3>Functions</h3>
+          <dl>
+            <dt>Booking form</dt>
+            <dd><a class="ics" href="/book">{{ instance_url }}/book</a></dd>
+            <dt>Booking API</dt>
+            <dd class="mono">POST /api/v1/bookings</dd>
+            <dt>Availability API</dt>
+            <dd class="mono">GET /api/v1/availability</dd>
+            <dt>Calendar handoff</dt>
+            <dd><span class="dot on"></span>.ics + Google / Outlook links</dd>
+            <dt>External intake</dt>
+            <dd>
+              {% if overview.sources %}
+                <span class="dot on"></span>{{ overview.sources | length }} source(s)
               {% else %}
-                <span class="status none">Not connected</span>
+                <span class="dot"></span>none configured
               {% endif %}
-            </div>
-            <div>
-              {% if cal.connected %}
-                <form method="post" action="/calendars/{{ cal.resource_slug }}/disconnect" style="display:inline">
-                  <button type="submit" class="btn secondary">Disconnect</button>
-                </form>
-              {% elif cal.connectable %}
-                <a class="btn" href="/calendars/{{ cal.resource_slug }}/connect">Connect with Google</a>
+            </dd>
+            <dt>Calendar sync</dt>
+            <dd>
+              {% if overview.calendars_connected %}
+                <span class="dot on"></span>{{ overview.calendars_connected }} connected
+              {% elif overview.calendars_configured %}
+                <span class="dot"></span>configured, not connected
               {% else %}
-                <span class="mono">set up via config/calon.toml</span>
+                <span class="dot"></span>not configured
               {% endif %}
-            </div>
-          </div>
-        {% endfor %}
-      </section>
-    {% endif %}
+            </dd>
+            <dt>API key access</dt>
+            <dd>
+              {% if overview.api_key_configured %}
+                <span class="dot on"></span>enabled
+              {% else %}
+                <span class="dot"></span>login only
+              {% endif %}
+            </dd>
+            {% if overview.docs_url %}
+              <dt>API docs</dt>
+              <dd><a class="ics" href="{{ overview.docs_url }}">{{ overview.docs_url }}</a></dd>
+            {% endif %}
+          </dl>
+        </div>
+        <div>
+          <h3>Scheduling rules</h3>
+          <dl>
+            <dt>Resource</dt>
+            <dd>{{ overview.resource_name }} <span class="mono">{{ overview.resource_slug }}</span></dd>
+            <dt>Timezone</dt>
+            <dd>{{ overview.timezone }}</dd>
+            <dt>Open days</dt>
+            <dd>{{ overview.weekdays or "none" }}</dd>
+            <dt>Daily window</dt>
+            <dd>{{ overview.window }}</dd>
+            <dt>Default duration</dt>
+            <dd>{{ overview.default_duration_min }} min</dd>
+            <dt>Slot grid</dt>
+            <dd>{{ overview.slot_granularity_min }} min</dd>
+            <dt>Minimum notice</dt>
+            <dd>{{ overview.min_notice_min }} min</dd>
+            <dt>Booking horizon</dt>
+            <dd>{{ overview.max_advance_days }} days</dd>
+            <dt>Buffers</dt>
+            <dd>{{ overview.buffer_before_min }} before / {{ overview.buffer_after_min }} after</dd>
+            <dt>Daily cap</dt>
+            <dd>{{ overview.max_bookings_per_day if overview.max_bookings_per_day else "no limit" }}</dd>
+            <dt>Blackouts</dt>
+            <dd>{{ overview.blackout_count }} period(s)</dd>
+            <dt>Event title</dt>
+            <dd class="mono">{{ overview.event_title }}</dd>
+          </dl>
+        </div>
+      </div>
+      {% if overview.sources %}
+        <h3 style="margin-top:20px">Intake sources</h3>
+        <dl>
+          {% for source in overview.sources %}
+            <dt>{{ source.slug }}</dt>
+            <dd>
+              <span class="mono">POST {{ source.endpoint }}</span>
+              &rarr; {{ source.resource_slug }}
+              {% if not source.enabled %}<span class="status none">disabled</span>{% endif %}
+            </dd>
+          {% endfor %}
+        </dl>
+      {% endif %}
+    </section>
 
-    <h2>Bookings</h2>
+    <section class="panel" id="calendars">
+      <h2>Calendars</h2>
+      <p class="hint">
+        Optional. calon checks conflicts against its own bookings either way; a connected
+        calendar adds the resource's real free/busy and writes accepted bookings into it.
+        Google OAuth redirect URI &mdash; register this exact URL as an authorized redirect
+        URI on the OAuth client: <span class="mono">{{ google_callback_url }}</span>
+      </p>
+      {% for cal in calendars %}
+        <div class="cal-row">
+          <div>
+            <span class="name">{{ cal.resource_slug }}</span>
+            {% if cal.provider %}<span class="provider">{{ cal.provider }}</span>{% endif %}
+            {% if cal.connected %}
+              <span class="status confirmed">Connected</span>
+            {% elif cal.configured %}
+              <span class="status none">Not connected</span>
+            {% else %}
+              <span class="status none">Not configured</span>
+            {% endif %}
+          </div>
+          <div>
+            {% if cal.connected %}
+              <form method="post" action="/calendars/{{ cal.resource_slug }}/disconnect" style="display:inline">
+                <button type="submit" class="btn secondary">Disconnect</button>
+              </form>
+            {% elif cal.connectable %}
+              <a class="btn" href="/calendars/{{ cal.resource_slug }}/connect">Connect with Google</a>
+            {% elif cal.configured %}
+              <span class="mono">set up via config/calon.toml</span>
+            {% endif %}
+          </div>
+        </div>
+        {% if not cal.configured %}
+          <details>
+            <summary>How to connect this resource's Google Calendar</summary>
+            <p class="hint" style="margin-top:10px">
+              1. In Google Cloud Console, enable the Calendar API and create an OAuth client
+              of type <em>Web application</em>, with
+              <span class="mono">{{ google_callback_url }}</span> as an authorized redirect URI.<br>
+              2. Add the block below to <code>config/calon.toml</code> with that client's id
+              and secret, and restart calon.<br>
+              3. Come back here and click <em>Connect with Google</em>.
+            </p>
+<pre>[calendars.{{ cal.resource_slug }}]
+provider = "google"
+calendar_id = "you@example.com"
+enabled = true
+client_id = "..."
+client_secret = "..."</pre>
+          </details>
+        {% endif %}
+      {% endfor %}
+    </section>
+
+    <h2 id="bookings">Bookings</h2>
     {% if intents %}
       <table>
         <thead>
