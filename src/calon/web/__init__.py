@@ -376,6 +376,7 @@ def dashboard(
             "intents": intents,
             "instance_url": settings.base_url,
             "calendars": calendars,
+            "google_callback_url": _google_callback_url(settings),
             "calendar_connected": request.query_params.get("calendar_connected"),
             "calendar_error": request.query_params.get("calendar_error"),
         },

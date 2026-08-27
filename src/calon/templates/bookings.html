@@ -75,6 +75,10 @@
     {% if calendars %}
       <section class="panel" id="calendars">
         <h2>Calendars</h2>
+        <p style="color:var(--dim); font-size:12px; margin:0 0 12px;">
+          Google OAuth redirect URI &mdash; register this exact URL as an authorized
+          redirect URI on the OAuth client: <span class="mono">{{ google_callback_url }}</span>
+        </p>
         {% for cal in calendars %}
           <div class="cal-row">
             <div>

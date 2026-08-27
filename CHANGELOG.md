@@ -29,6 +29,10 @@ per user-visible change, describing the effect rather than the implementation.
   (the Calendars link only appears once at least one `[calendars.<slug>]` resource is
   configured), so the Connect-with-Google panel is one click away from anywhere in the
   operator area instead of requiring a scroll to find.
+- The Calendars panel now shows the exact Google OAuth redirect URI to register on the
+  OAuth client, computed from the instance's actual `base_url` — so a `CALON_BASE_URL`
+  that doesn't match what's registered in Google Cloud Console (the most common cause of
+  a failed connect) is visible in the dashboard instead of only in `docs/self-hosting.md`.
 
 ### Changed
 
