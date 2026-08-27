@@ -131,7 +131,7 @@ Then open <http://localhost:8000/docs> for the generated OpenAPI reference, and
 POST /api/v1/bookings      submit a booking request       (public)
 GET  /api/v1/availability  list free slots in a window    (public)
 GET  /api/v1/bookings/{id}/calendar.ics  the RFC 5545 file (operator login)
-GET  /bookings             the operator panel list        (operator login)
+GET  /bookings             the operator dashboard         (operator login)
 GET  /book                 the public booking form        (public)
 GET  /healthz              liveness
 ```
@@ -174,9 +174,10 @@ The public booking form at `/book`:
 
 ![The calon booking form, showing name, email, phone, date, time, subject, and notes fields](docs/screenshots/book.png)
 
-The login-gated operator dashboard at `/bookings`:
+The login-gated operator dashboard at `/bookings` — an overview of the functions this
+instance exposes and the rules in force, the calendars panel, and every booking:
 
-![The calon operator dashboard listing accepted bookings with requester, subject, status, and a calendar download link](docs/screenshots/bookings.png)
+![The calon operator dashboard: an overview panel listing the instance's functions and scheduling rules, a calendars panel, and the bookings table with requester, subject, status, and a calendar download link](docs/screenshots/bookings.png)
 
 The operator login at `/login`:
 

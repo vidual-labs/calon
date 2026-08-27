@@ -29,6 +29,20 @@ per user-visible change, describing the effect rather than the implementation.
   (the Calendars link only appears once at least one `[calendars.<slug>]` resource is
   configured), so the Connect-with-Google panel is one click away from anywhere in the
   operator area instead of requiring a scroll to find.
+- The operator dashboard now opens with an **Overview** panel: every function the instance
+  exposes (booking form, booking and availability APIs, calendar handoff, external intake,
+  calendar sync, API-key access, API docs) with its live status, and the scheduling rules
+  currently in force — days, window, duration, slot grid, notice, horizon, buffers, daily
+  cap, blackouts — read from the config as calon actually parsed it. Checking what an
+  instance is doing no longer means opening a shell on the server.
+- The **Calendars** panel is now always shown. A resource with no `[calendars.<slug>]`
+  entry gets a "Not configured" row and, folded away underneath it, the exact steps to
+  connect it: the redirect URI to register on the OAuth client and the TOML block to
+  paste, with that resource's real slug filled in. Previously the whole panel was hidden
+  until a calendar was already configured, so there was no way to discover the
+  Connect-with-Google flow from the operator area. Nothing about it is required — an
+  instance with no calendar configured still works exactly as before, the row simply says
+  so instead of showing nothing at all.
 - The Calendars panel now shows the exact Google OAuth redirect URI to register on the
   OAuth client, computed from the instance's actual `base_url` — so a `CALON_BASE_URL`
   that doesn't match what's registered in Google Cloud Console (the most common cause of

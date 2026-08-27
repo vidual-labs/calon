@@ -191,6 +191,10 @@ refresh_token = "..."          # only if not using the dashboard's Connect butto
 
 ### Google Calendar
 
+The operator dashboard's **Calendars** panel shows the redirect URI to register and, for
+a resource that has no `[calendars.<slug>]` block yet, the exact config block to paste —
+so you can follow these steps with the values already filled in for your instance.
+
 **Using the dashboard's Connect button (recommended):**
 
 1. In Google Cloud Console, create a project and enable the **Calendar API**.

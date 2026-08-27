@@ -19,7 +19,7 @@ import pytest
 import time_machine
 from fastapi.testclient import TestClient
 
-from calon.config import CalendarProviderConfig, OperatorConfig, Settings
+from calon.config import CalendarProviderConfig, OperatorConfig, Settings, SourceConfig
 from calon.main import create_app
 from calon.security import derive_login_key, new_oauth_state
 from tests.conftest import NOW
@@ -217,15 +217,30 @@ class TestCalendarDisconnect:
 
 
 class TestDashboardCalendarsPanel:
-    def test_no_calendars_configured_shows_no_panel(self, tmp_path: Path) -> None:
-        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+    def test_no_calendars_configured_shows_the_setup_instructions(self, tmp_path: Path) -> None:
+        """With nothing configured the panel explains the setup rather than disappearing.
+
+        It stays a signpost: no provider is built, no connect action is offered, and the
+        booking flow is untouched (CLAUDE.md §2) — the operator just gets a way to
+        discover the feature that does not require reading the docs first.
+        """
+        settings = Settings(
+            db_path=tmp_path / "calon.db",
+            config_path=None,
+            login=LOGIN,
+            base_url="http://testserver",
+        )
         with (
             time_machine.travel(NOW, tick=False),
             TestClient(create_app(settings)) as client,
         ):
             _log_in(client)
             html = client.get("/bookings").text
-            assert "Calendars" not in html
+            assert "Calendars" in html
+            assert "Not configured" in html
+            assert "/calendars/default/connect" not in html  # no action, only a signpost
+            assert "[calendars.default]" in html
+            assert "http://testserver/calendars/google/callback" in html
 
     def test_a_configured_but_unconnected_resource_shows_a_connect_button(
         self, operator_client: TestClient
@@ -234,3 +249,46 @@ class TestDashboardCalendarsPanel:
         assert "Calendars" in html
         assert "Connect with Google" in html
         assert "Not connected" in html
+        assert "Not configured" not in html
+
+
+class TestDashboardOverviewPanel:
+    """The functions overview: what the instance exposes, under which rules."""
+
+    def test_it_lists_the_functions_and_the_rules_in_force(self, tmp_path: Path) -> None:
+        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        with (
+            time_machine.travel(NOW, tick=False),
+            TestClient(create_app(settings)) as client,
+        ):
+            _log_in(client)
+            html = client.get("/bookings").text
+            assert "Overview" in html
+            assert "POST /api/v1/bookings" in html
+            assert "GET /api/v1/availability" in html
+            # The default policy, rendered from the config calon actually parsed.
+            assert "Mon, Tue, Wed, Thu, Fri" in html
+            assert "09:00-17:00" in html
+            assert "no limit" in html  # max_bookings_per_day unset
+            assert "none configured" in html  # no [sources.<slug>]
+
+    def test_a_configured_source_is_listed_with_its_endpoint(self, tmp_path: Path) -> None:
+        config = _google_config()
+        config = OperatorConfig(
+            calendars=config.calendars,
+            sources={
+                "openflow": SourceConfig(
+                    slug="openflow",
+                    secret="s" * 16,
+                    fields={"form-1": {"start": "fld_start"}},
+                )
+            },
+        )
+        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        with (
+            time_machine.travel(NOW, tick=False),
+            TestClient(create_app(settings, config)) as client,
+        ):
+            _log_in(client)
+            html = client.get("/bookings").text
+            assert "POST /api/v1/openflow" in html
