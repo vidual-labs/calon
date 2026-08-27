@@ -158,7 +158,10 @@ and Outlook deeplinks. That standalone behaviour is the default and is fully ava
 
 To connect a resource's **own** Google Calendar or Microsoft 365 calendar you need an
 **OAuth app** registered with the provider (a Google Cloud OAuth client, or an Azure AD
-app registration) — its `client_id` and `client_secret` go straight into the config.
+app registration). For **Google**, its `client_id` and `client_secret` can go either into
+the config file or straight into the operator dashboard (ADR 0016) — the dashboard path
+needs no file edit and no restart, which is the one to use on a container or a managed
+deployment. For **Microsoft 365** they go into the config.
 Registering that OAuth app is always a manual, one-time step: it happens in the provider's
 own developer console, and calon cannot do it for you. From there, how the **refresh
 token** — the credential that actually authorizes calon to read/write the calendar — gets
@@ -191,26 +194,32 @@ refresh_token = "..."          # only if not using the dashboard's Connect butto
 
 ### Google Calendar
 
-The operator dashboard's **Calendars** panel shows the redirect URI to register and, for
-a resource that has no `[calendars.<slug>]` block yet, the exact config block to paste —
-so you can follow these steps with the values already filled in for your instance.
-
-**Using the dashboard's Connect button (recommended):**
+**Entirely from the dashboard (recommended — no file edit, no restart):**
 
 1. In Google Cloud Console, create a project and enable the **Calendar API**.
 2. Create an **OAuth client ID** of type **Web application**. Add
    `<CALON_BASE_URL>/calendars/google/callback` (e.g.
    `https://booking.example.com/calendars/google/callback`) as an **authorized redirect
-   URI** — this must match `CALON_BASE_URL` exactly, protocol included. Note the client id
-   and client secret.
-3. Put them in `config/calon.toml` as `client_id` and `client_secret`, with `provider =
-   "google"` and `enabled = true`. Leave `refresh_token` blank. Restart calon.
-4. Log in to the operator dashboard (`/bookings`) and click **Connect with Google** next to
-   the resource. Approve the consent screen — Google requests the
+   URI** — this must match `CALON_BASE_URL` exactly, protocol included. The Calendars panel
+   on the dashboard prints the exact URI your instance will use; copy it from there rather
+   than typing it, since a mismatch is the most common cause of a failed connect.
+3. Log in to the operator dashboard (`/bookings`), and in the **Calendars** panel paste the
+   client id and client secret, plus the `calendar_id` (the account's email for its primary
+   calendar; leave blank for `primary`). Save.
+4. Click **Connect with Google**. Approve the consent screen — Google requests the
    `https://www.googleapis.com/auth/calendar.events` scope — and you are redirected back,
-   connected.
-5. `calendar_id` for the account's primary calendar is that account's email
-   (`you@example.com`).
+   connected. Nothing to restart.
+
+The credentials are stored in `calon.db`, so **that file now holds the client secret as
+well as the refresh token** — give it the same care as any secret, and include it in your
+backups. **Forget credentials** on the panel removes them again, along with the connection
+built on them.
+
+**Via the config file:** if you prefer to keep credentials in `config/calon.toml`, put them
+there as `client_id` and `client_secret` with `provider = "google"` and `enabled = true`,
+leave `refresh_token` blank, and restart calon; then use the dashboard's **Connect with
+Google** button for step 4 above. A `[calendars.<slug>]` entry always wins over anything
+entered in the dashboard, and the dashboard form refuses to overwrite it.
 
 **Out-of-band (scripted/headless installs, or an OAuth client you cannot expose a
 callback URL for):**
@@ -238,10 +247,12 @@ callback URL for):**
 `config/calon.toml` always holds the client secret, and holds the refresh token too for
 any resource set up out-of-band — treat both like passwords: keep them out of version
 control (the example file is a template only), and restrict file permissions on a
-production host. For a resource connected through the dashboard's Connect button instead,
-the refresh token lives in `calon.db`'s `calendar_credential` table (ADR 0014) — give that
-file the same file-permission care as `config/calon.toml`, since it is now also a secrets
-file, not just application data. Either way, the token is held in memory for the running
+production host. For a resource set up through the dashboard instead,
+the refresh token lives in `calon.db`'s `calendar_credential` table (ADR 0014), and — if
+you entered the OAuth client there rather than in the config file — the `client_id` and
+`client_secret` live in its `calendar_oauth_client` table (ADR 0016). Give that file the
+same file-permission care as `config/calon.toml`, since it is now also a secrets file, not
+just application data. Either way, the token is held in memory for the running
 process's lifetime; if the provider rotates it *during that process's uptime*, the
 rotation is adopted in memory only and is not written back to the TOML or the database
 (unchanged from ADR 0013 — still an open question, not something the Connect button

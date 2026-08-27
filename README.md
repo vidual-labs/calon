@@ -177,7 +177,7 @@ The public booking form at `/book`:
 The login-gated operator dashboard at `/bookings` — an overview of the functions this
 instance exposes and the rules in force, the calendars panel, and every booking:
 
-![The calon operator dashboard: an overview panel listing the instance's functions and scheduling rules, a calendars panel, and the bookings table with requester, subject, status, and a calendar download link](docs/screenshots/bookings.png)
+![The calon operator dashboard: an overview panel listing the instance's functions and scheduling rules, a calendars panel with the Google OAuth setup form, and the bookings table with requester, subject, status, and a calendar download link](docs/screenshots/bookings.png)
 
 The operator login at `/login`:
 
@@ -268,13 +268,15 @@ calendar. When enabled, two things happen:
   matching event on the connected calendar (amendments update it), so the operator does not
   copy the booking into their calendar by hand.
 
-The connection is opt-in, per resource, configured in `config/calon.toml` (one
-`[calendars.<resource_slug>]` block naming the provider and the OAuth app's `client_id`/
-`client_secret`). From there, a Google resource can be connected with one click — the
-operator dashboard has a **"Connect with Google"** button that runs the OAuth exchange and
-stores the resulting refresh token itself, no restart required. Microsoft 365, and Google
-setups that prefer a scripted/headless install, still use the out-of-band flow: obtain a
-refresh token once outside calon and paste it into the same config block. If the provider
+The connection is opt-in, per resource. A **Google** resource can be set up entirely from
+the operator dashboard: register an OAuth client in Google Cloud Console with the redirect
+URI the Calendars panel prints, paste its `client_id` and `client_secret` into the panel,
+and click **Connect with Google** — calon runs the OAuth exchange and stores the refresh
+token itself, with no config-file edit and no restart. The same credentials can instead go
+into `config/calon.toml` as a `[calendars.<resource_slug>]` block, which always wins where
+it is present. Microsoft 365, and Google setups that prefer a scripted/headless install,
+still use the out-of-band flow: obtain a refresh token once outside calon and paste it into
+that config block. If the provider
 API is unreachable or errors, calon **degrades to its own database** as the sole source of
 truth for that request rather than failing the booking — an unreachable calendar makes
 availability less accurate, it does not take booking down.
@@ -282,7 +284,9 @@ availability less accurate, it does not take booking down.
 See [ADR 0009](docs/adr/0009-optional-resource-calendar-sync.md) for the decision,
 [ADR 0013](docs/adr/0013-minimal-http-client-and-sqlite-credential-store.md) for the
 client and credential-storage choices, [ADR 0014](docs/adr/0014-operator-initiated-google-connect-flow.md)
-for the dashboard connect flow, and the self-hosting doc for exact setup steps.
+for the dashboard connect flow,
+[ADR 0016](docs/adr/0016-dashboard-entered-oauth-client-credentials.md) for entering the
+OAuth client in the dashboard, and the self-hosting doc for exact setup steps.
 
 ## Roadmap
 

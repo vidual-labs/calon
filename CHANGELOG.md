@@ -12,6 +12,15 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- **You can now connect a Google Calendar entirely from the operator dashboard.** The
+  Calendars panel has a form for the OAuth client id and secret, so connecting a resource
+  no longer requires editing `config/calon.toml` on the host and restarting: register the
+  OAuth client in Google Cloud Console with the redirect URI the panel prints, paste the
+  two values, click Connect with Google, approve. The credentials are stored in `calon.db`
+  (back that file up — it now holds the client secret as well as the refresh token) and can
+  be removed again with "Forget credentials". A `[calendars.<slug>]` entry in
+  `config/calon.toml` still wins wherever you have one, and the form refuses to overwrite
+  it. Microsoft 365 still uses the out-of-band setup.
 - The operator dashboard now has a **"Connect with Google"** button for each configured
   resource calendar. Instead of running Google's OAuth flow out-of-band and pasting a
   refresh token into `config/calon.toml`, an operator with a `[calendars.<slug>]` entry
