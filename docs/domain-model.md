@@ -281,6 +281,22 @@ Event types: `intent.received`, `intent.normalized`, `intent.rejected`, `intent.
 `booking.created`, `booking.cancelled`, `handoff.generated`, `intake.replayed`,
 `intake.rejected_signature`.
 
+### `calendar_credential`
+
+One row per resource connected through the operator dashboard's "Connect with Google"
+button (ADR 0014).
+
+`resource_slug` (primary key) · `provider` · `refresh_token` · `connected_at_utc` ·
+`updated_at_utc`
+
+`resource_slug` is the same key `[calendars.<resource_slug>]` uses in `config/calon.toml`
+— there is no foreign key to `resource.id`, mirroring how `CalendarProviderConfig` and
+`CalendarProviderRegistry` already key everything by slug rather than by row id. A resource
+that only uses the out-of-band/TOML refresh token (ADR 0013) has no row here at all; when
+both a TOML value and a row here exist, the row wins (it reflects the provider's own token
+rotation, the TOML value does not). No column-level encryption — see ADR 0014's Decision
+for why, and treat `calon.db` with the same file-permission care as `config/calon.toml`.
+
 ## Concurrency
 
 Rule evaluation and insertion happen inside a single `BEGIN IMMEDIATE` transaction, with a

@@ -43,6 +43,7 @@ __all__ = [
     "BlackoutPeriodRow",
     "Booking",
     "BookingIntent",
+    "CalendarCredentialRow",
     "ResourceRow",
     "UtcDateTime",
 ]
@@ -248,6 +249,33 @@ class Booking(Base):
             "block_end_utc",
         ),
     )
+
+
+class CalendarCredentialRow(Base):
+    """A resource's OAuth refresh token, obtained through the operator connect flow.
+
+    ADR 0014: one row per resource that has been connected via the "Connect with Google"
+    button on the operator dashboard, keyed by the resource slug — the same natural key
+    ``[calendars.<slug>]`` uses in ``config/calon.toml``. A resource that only uses the
+    out-of-band/TOML path (ADR 0013) has no row here; ``CalendarProviderRegistry`` prefers
+    this table's token over the TOML's when both are present, since this one reflects the
+    provider's own token rotation.
+
+    No column-level encryption (see ADR 0014, Decision): the refresh token is a secret at
+    the same trust level as ``client_secret`` already stored in plaintext in
+    ``config/calon.toml``, and as the requester PII already stored in plaintext in
+    ``booking_intent`` — calon has one trust boundary, the operator's own host.
+    """
+
+    __tablename__ = "calendar_credential"
+
+    resource_slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    #: The provider this credential is for. ``"google"`` today (ADR 0014 scopes the
+    #: connect flow to Google only); Microsoft 365 stays on the out-of-band path.
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
+    connected_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    updated_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
 
 
 class AuditEvent(Base):

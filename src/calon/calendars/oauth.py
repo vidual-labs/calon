@@ -32,6 +32,7 @@ __all__ = [
     "ProviderTransport",
     "TokenStore",
     "calendar_error",
+    "exchange_authorization_code",
     "refresh_access_token",
 ]
 
@@ -135,6 +136,54 @@ def refresh_access_token(
     if not (isinstance(granted, str) and granted):
         granted = refresh_token
     return access_token, expires_in, granted
+
+
+def exchange_authorization_code(
+    client: httpx.Client,
+    *,
+    token_url: str,
+    credentials: OAuthCredentials,
+    code: str,
+    redirect_uri: str,
+) -> tuple[str, int, str]:
+    """Exchange an authorization code for tokens (RFC 6749 §4.1.3); same shape as a refresh.
+
+    Used only by the operator-initiated connect flow (ADR 0014) — a normal request/refresh
+    cycle never calls this. Returns ``(access_token, expires_in, refresh_token)`` exactly
+    like :func:`refresh_access_token`, so a caller adopts the result into a
+    :class:`TokenStore` the same way either function is used. Google issues a refresh token
+    only on the *first* consent for a given client (or whenever ``prompt=consent`` forces
+    one, which the connect flow's authorize URL always sets) — a response with no
+    ``refresh_token`` raises :class:`CalendarProviderError`, because a connect with nothing
+    to persist has not actually connected anything.
+    """
+    response = client.post(
+        token_url,
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": credentials.client_id,
+            "client_secret": credentials.client_secret,
+        },
+    )
+    if response.status_code != 200:
+        raise calendar_error("oauth connect", f"token endpoint returned {response.status_code}")
+    try:
+        body = response.json()
+    except (JSONDecodeError, ValueError) as exc:
+        raise calendar_error("oauth connect", "token endpoint returned a non-JSON body") from exc
+    access_token = body.get("access_token")
+    expires_in = body.get("expires_in", 0)
+    if not isinstance(access_token, str) or not access_token or not isinstance(expires_in, int):
+        raise calendar_error("oauth connect", "response lacked access_token or expires_in")
+    refresh_token = body.get("refresh_token")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        raise calendar_error(
+            "oauth connect",
+            "response lacked a refresh_token; reconnect to force a fresh consent",
+        )
+    return access_token, expires_in, refresh_token
 
 
 class ProviderTransport:

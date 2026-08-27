@@ -11,7 +11,10 @@ Routes:
 * ``POST /login``     — verifies the entered login and sets a session cookie.
 * ``POST /logout``    — ends the session and redirects to the login form.
 * ``GET  /bookings``  — the operator dashboard.
-* Gated by :func:`calon.api.deps.get_authorised_operator`.
+* ``GET  /calendars/{resource_slug}/connect``    — start the Google connect flow (ADR 0014).
+* ``GET  /calendars/google/callback``            — Google's redirect target.
+* ``POST /calendars/{resource_slug}/disconnect`` — drop a resource's stored credential.
+* Gated by :func:`calon.api.deps.get_authorised_operator`, except ``/book`` and ``/login``.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote_plus
+from urllib.parse import quote_plus, unquote_plus
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request, Response, status
@@ -34,13 +37,14 @@ from sqlalchemy.orm import Session
 from calon.api.deps import AuthorisedOperator, CalendarRegistryDep, DatabaseDep, SettingsDep
 from calon.api.v1 import _calendar_writeback
 from calon.calendarkit import build_deeplinks, event_for, event_uid, ics_filename
+from calon.calendars import CalendarProviderError
 from calon.clock import utcnow
-from calon.config import Settings
+from calon.config import OperatorConfig, Settings
 from calon.intake import native
-from calon.models import Booking, BookingIntent
+from calon.models import Booking, BookingIntent, CalendarCredentialRow
 from calon.schemas import BookingIntentIn, CalendarHandoff, CalendarLinksOut, RequesterIn
-from calon.security import SESSION_COOKIE
-from calon.services import booking_service
+from calon.security import SESSION_COOKIE, derive_login_key, verify_oauth_state
+from calon.services import booking_service, calendar_connect_service
 
 __all__ = ["router"]
 
@@ -355,16 +359,132 @@ def dashboard(
     """List every booking intent (accepted or rejected), newest first.
 
     Gated by the operator's login (the ``AuthorisedOperator`` dependency). A request
-    without a valid session or API key gets a ``401``.
+    without a valid session or API key gets a ``401``. Also shows every configured
+    ``[calendars.<slug>]`` resource with its connect status (ADR 0014) — but only if at
+    least one is configured, so a standalone instance with nothing set up sees no
+    calendars panel at all.
     """
+    config: OperatorConfig = request.app.state.config
     with database.read() as session:
         intents = _load_intents(session, limit=50)
+        calendars = _load_calendar_status(session, config)
 
     return templates.TemplateResponse(
         request=request,
         name="bookings.html",
-        context={"intents": intents, "instance_url": settings.base_url},
+        context={
+            "intents": intents,
+            "instance_url": settings.base_url,
+            "calendars": calendars,
+            "calendar_connected": request.query_params.get("calendar_connected"),
+            "calendar_error": request.query_params.get("calendar_error"),
+        },
     )
+
+
+# ---------------------------------------------------------------------------
+# Calendar connect flow (ADR 0014)
+# ---------------------------------------------------------------------------
+
+
+def _google_callback_url(settings: Settings) -> str:
+    return f"{settings.base_url}/calendars/google/callback"
+
+
+@router.get("/calendars/{resource_slug}/connect", name="calendar_connect")
+def calendar_connect(
+    resource_slug: str,
+    request: Request,
+    settings: SettingsDep,
+    _operator: AuthorisedOperator,
+) -> Response:
+    """Redirect the operator's browser to Google's consent screen (ADR 0014)."""
+    config: OperatorConfig = request.app.state.config
+    try:
+        url = calendar_connect_service.start_connect(
+            config,
+            resource_slug=resource_slug,
+            redirect_uri=_google_callback_url(settings),
+            signing_key=derive_login_key(settings.login),
+        )
+    except calendar_connect_service.CalendarNotConfiguredError as exc:
+        return RedirectResponse(
+            f"/bookings?calendar_error={quote_plus(str(exc))}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/calendars/google/callback", name="calendar_connect_callback")
+def calendar_connect_callback(
+    request: Request,
+    database: DatabaseDep,
+    settings: SettingsDep,
+    calendar_registry: CalendarRegistryDep,
+    _operator: AuthorisedOperator,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> Response:
+    """Handle Google's redirect back: exchange the code, persist, go live (ADR 0014).
+
+    Gated by the operator's login exactly like every other route here — Google redirects
+    the operator's own browser back to this URL, which still carries their session
+    cookie, so this is not an unauthenticated webhook.
+    """
+    if error:
+        return RedirectResponse(
+            f"/bookings?calendar_error={quote_plus(error)}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    if not code or not state:
+        return RedirectResponse(
+            "/bookings?calendar_error=the+connect+request+was+missing+code+or+state",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    resource_slug = verify_oauth_state(derive_login_key(settings.login), state)
+    if resource_slug is None:
+        return RedirectResponse(
+            "/bookings?calendar_error=the+connect+link+expired%3B+please+try+again",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    config: OperatorConfig = request.app.state.config
+    try:
+        with database.write() as session:
+            calendar_connect_service.complete_connect(
+                session,
+                calendar_registry,
+                config,
+                resource_slug=resource_slug,
+                code=code,
+                redirect_uri=_google_callback_url(settings),
+                now=utcnow(),
+            )
+    except (calendar_connect_service.CalendarNotConfiguredError, CalendarProviderError) as exc:
+        return RedirectResponse(
+            f"/bookings?calendar_error={quote_plus(str(exc))}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    return RedirectResponse(
+        f"/bookings?calendar_connected={quote_plus(resource_slug)}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/calendars/{resource_slug}/disconnect", name="calendar_disconnect")
+def calendar_disconnect(
+    resource_slug: str,
+    database: DatabaseDep,
+    calendar_registry: CalendarRegistryDep,
+    _operator: AuthorisedOperator,
+) -> Response:
+    """Remove a resource's stored credential and degrade it to calon-only (ADR 0014)."""
+    with database.write() as session:
+        calendar_connect_service.disconnect(session, calendar_registry, resource_slug=resource_slug)
+    return RedirectResponse("/bookings", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +518,30 @@ def _error_html(message: str) -> str:
         '<a href="/login">Back to login</a>'
         "</body></html>"
     )
+
+
+def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict[str, object]]:
+    """One row per configured ``[calendars.<slug>]`` entry, with its connect status.
+
+    ``connectable`` distinguishes Google (has a connect button) from Microsoft (out-of-band
+    only, per ADR 0014's scope) so the template can render the right action without
+    guessing from the provider name itself.
+    """
+    rows: list[dict[str, object]] = []
+    for slug, cfg in sorted(config.calendars.items()):
+        credential = session.get(CalendarCredentialRow, slug)
+        rows.append(
+            {
+                "resource_slug": slug,
+                "provider": cfg.provider,
+                "connectable": cfg.provider == "google",
+                "connected": credential is not None,
+                "connected_at": (
+                    credential.connected_at_utc.isoformat() if credential is not None else None
+                ),
+            }
+        )
+    return rows
 
 
 def _load_intents(session: Session, *, limit: int = 50) -> list[dict[str, object]]:

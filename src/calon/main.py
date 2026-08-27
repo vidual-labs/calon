@@ -15,6 +15,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import sqlalchemy as sa
 from fastapi import FastAPI
 
 import calon.intake.external as intake_external
@@ -26,6 +27,7 @@ from calon.config import OperatorConfig, Settings, load_operator_config
 from calon.db import Database
 from calon.intake.external import SourceRegistry
 from calon.migrate import upgrade_to_head
+from calon.models import CalendarCredentialRow
 from calon.security import LoginStore
 from calon.services.provisioning import sync_operator_config
 from calon.web import router as web_router
@@ -74,6 +76,13 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
                 resource.timezone,
                 len(resolved_config.blackouts),
             )
+            # Resources connected through the operator dashboard's "Connect with Google"
+            # button (ADR 0014) have their refresh token here; it takes precedence over
+            # the TOML's, which is only a bootstrap seed once a real connection exists.
+            connected_refresh_tokens = {
+                row.resource_slug: row.refresh_token
+                for row in session.scalars(sa.select(CalendarCredentialRow))
+            }
 
         app.state.db = database
         app.state.settings = resolved_settings
@@ -99,7 +108,9 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
         # per-request probing of it is possible. An instance with no calendars configured
         # gets an empty registry — every provider call degrades to calon-only
         # availability, which is exactly today's behaviour (CLAUDE.md §2).
-        calendar_registry = CalendarProviderRegistry.from_config(resolved_config.calendars)
+        calendar_registry = CalendarProviderRegistry.from_config(
+            resolved_config.calendars, refresh_token_overrides=connected_refresh_tokens
+        )
         app.state.calendar_registry = calendar_registry
         logger.info(
             "calon calendars: %d provider(s) registered",

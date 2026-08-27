@@ -32,6 +32,20 @@
     a.ics { color:var(--accent); text-decoration:none; font-size:13px; }
     a.ics:hover { text-decoration:underline; }
     .empty { padding:40px; text-align:center; color:var(--dim); }
+    section.panel { margin-bottom:28px; background:var(--panel); border:1px solid var(--border);
+                    border-radius:8px; padding:16px 18px; }
+    .cal-row { display:flex; align-items:center; justify-content:space-between;
+               padding:8px 0; border-bottom:1px solid #1a1f2a; }
+    .cal-row:last-child { border-bottom:none; }
+    .cal-row .name { font-weight:600; }
+    .cal-row .provider { color:var(--dim); font-size:12px; margin-left:8px; }
+    .btn { display:inline-block; background:var(--accent); color:#0f1116; font-weight:600;
+           font-size:13px; padding:6px 14px; border-radius:6px; text-decoration:none;
+           border:none; cursor:pointer; }
+    .btn.secondary { background:none; color:var(--dim); border:1px solid var(--border); }
+    .flash { padding:10px 14px; border-radius:6px; font-size:13px; margin-bottom:16px; }
+    .flash.ok { background:rgba(81,207,102,.14); color:var(--ok); }
+    .flash.err { background:rgba(255,107,107,.14); color:#ff6b6b; }
   </style>
 </head>
 <body>
@@ -45,6 +59,43 @@
     </nav>
   </header>
   <main>
+    {% if calendar_connected %}
+      <div class="flash ok">Connected {{ calendar_connected }} to Google Calendar.</div>
+    {% endif %}
+    {% if calendar_error %}
+      <div class="flash err">{{ calendar_error }}</div>
+    {% endif %}
+
+    {% if calendars %}
+      <section class="panel">
+        <h2>Calendars</h2>
+        {% for cal in calendars %}
+          <div class="cal-row">
+            <div>
+              <span class="name">{{ cal.resource_slug }}</span>
+              <span class="provider">{{ cal.provider }}</span>
+              {% if cal.connected %}
+                <span class="status confirmed">Connected</span>
+              {% else %}
+                <span class="status none">Not connected</span>
+              {% endif %}
+            </div>
+            <div>
+              {% if cal.connected %}
+                <form method="post" action="/calendars/{{ cal.resource_slug }}/disconnect" style="display:inline">
+                  <button type="submit" class="btn secondary">Disconnect</button>
+                </form>
+              {% elif cal.connectable %}
+                <a class="btn" href="/calendars/{{ cal.resource_slug }}/connect">Connect with Google</a>
+              {% else %}
+                <span class="mono">set up via config/calon.toml</span>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </section>
+    {% endif %}
+
     <h2>Bookings</h2>
     {% if intents %}
       <table>

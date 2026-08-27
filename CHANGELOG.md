@@ -12,6 +12,15 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- The operator dashboard now has a **"Connect with Google"** button for each configured
+  resource calendar. Instead of running Google's OAuth flow out-of-band and pasting a
+  refresh token into `config/calon.toml`, an operator with a `[calendars.<slug>]` entry
+  set up (provider, `client_id`, `client_secret`) can now click Connect, authorize on
+  Google's own consent screen, and be redirected straight back — connected, with no
+  restart required. The OAuth app itself still has to be registered once in Google Cloud
+  Console (that step cannot be automated for a self-hosted instance), but the manual
+  refresh-token copy-paste is gone. Microsoft 365 is unchanged and still uses the
+  out-of-band setup. See `docs/self-hosting.md`.
 - `[calendars.<resource_slug>]` now accepts `client_id` and `client_secret` — the
   connected provider's OAuth app credentials. Previously there was nowhere to
   configure them, so a connected Google Calendar or Microsoft 365 calendar could

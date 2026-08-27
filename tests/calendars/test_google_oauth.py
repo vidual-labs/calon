@@ -14,7 +14,11 @@ import httpx
 import pytest
 
 from calon.calendars import CalendarProviderError
-from calon.calendars.oauth import OAuthCredentials, refresh_access_token
+from calon.calendars.oauth import (
+    OAuthCredentials,
+    exchange_authorization_code,
+    refresh_access_token,
+)
 
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 CREDS = OAuthCredentials(client_id="cid", client_secret="csecret")
@@ -104,3 +108,76 @@ class TestRefreshTokenParse:
                 _client(handler), token_url=_TOKEN_URL, credentials=CREDS, refresh_token="dead"
             )
         assert "access_token" in str(exc_info.value)
+
+
+class TestExchangeAuthorizationCode:
+    """The authorization-code exchange used by the connect flow (ADR 0014)."""
+
+    def test_the_exchange_body_is_correct_and_returns_the_refresh_token(self):
+        seen: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["content_type"] = request.headers.get("content-type", "")
+            seen["body"] = request.content.decode()
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "tok-connect",
+                    "expires_in": 3600,
+                    "refresh_token": "fresh-refresh-token",
+                    "token_type": "Bearer",
+                },
+            )
+
+        access, expires, refresh = exchange_authorization_code(
+            _client(handler),
+            token_url=_TOKEN_URL,
+            credentials=CREDS,
+            code="auth-code-abc",
+            redirect_uri="https://calon.example.com/calendars/google/callback",
+        )
+
+        from urllib.parse import parse_qs
+
+        assert seen["content_type"].startswith("application/x-www-form-urlencoded")
+        sent = parse_qs(seen["body"])
+        assert sent == {
+            "grant_type": ["authorization_code"],
+            "code": ["auth-code-abc"],
+            "redirect_uri": ["https://calon.example.com/calendars/google/callback"],
+            "client_id": ["cid"],
+            "client_secret": ["csecret"],
+        }
+        assert access == "tok-connect"
+        assert expires == 3600
+        assert refresh == "fresh-refresh-token"
+
+    def test_a_response_with_no_refresh_token_raises(self):
+        # Google omits refresh_token on a re-consent it does not treat as first-time;
+        # a connect that gets nothing to persist has not actually connected anything.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 3600})
+
+        with pytest.raises(CalendarProviderError) as exc_info:
+            exchange_authorization_code(
+                _client(handler),
+                token_url=_TOKEN_URL,
+                credentials=CREDS,
+                code="auth-code",
+                redirect_uri="https://calon.example.com/calendars/google/callback",
+            )
+        assert "refresh_token" in str(exc_info.value)
+
+    def test_a_400_grant_raises_the_provider_error(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(400, json={"error": "invalid_grant"})
+
+        with pytest.raises(CalendarProviderError) as exc_info:
+            exchange_authorization_code(
+                _client(handler),
+                token_url=_TOKEN_URL,
+                credentials=CREDS,
+                code="bad-code",
+                redirect_uri="https://calon.example.com/calendars/google/callback",
+            )
+        assert "400" in str(exc_info.value)

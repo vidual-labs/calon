@@ -183,7 +183,7 @@ organizer_email = ""
 # timezone = "Europe/Berlin"
 
 # ---------------------------------------------------------------------------
-# Resource calendar sync (optional, off by default) — ADR 0009 / ADR 0013.
+# Resource calendar sync (optional, off by default) — ADR 0009 / 0013 / 0014.
 #
 # calon is standalone first: with no [calendars] block a resource behaves
 # exactly as before — conflicts are checked against calon's own bookings only,
@@ -210,14 +210,19 @@ organizer_email = ""
 #                registration). Both are required whenever enabled = true —
 #                without them the provider can never refresh an access token,
 #                so calon refuses to start rather than silently never syncing.
-# refresh_token  the OAuth refresh token you already obtained for this account.
-#                calon does NOT run OAuth: complete the provider's
-#                authorization flow out-of-band and paste the resulting
-#                refresh token here. See "Connecting a resource's calendar"
-#                in docs/self-hosting.md for exactly how to get it.
+# refresh_token  the OAuth refresh token for this account. For Google, you can
+#                leave this blank and instead click "Connect with Google" on
+#                the operator dashboard (/bookings) after setting client_id/
+#                client_secret and restarting — calon runs the OAuth exchange
+#                itself and stores the token in calon.db (ADR 0014). For
+#                Microsoft 365, or a scripted/headless Google install, paste
+#                a refresh token you obtained out-of-band here instead. See
+#                "Resource calendar sync" in docs/self-hosting.md for both.
 #
 # This file is git-ignored and client_secret/refresh_token are secrets — never
-# commit your real config/calon.toml.
+# commit your real config/calon.toml. A Google resource connected via the
+# dashboard button stores its refresh token in calon.db instead — give that
+# file the same care.
 # ---------------------------------------------------------------------------
 # [calendars.default]
 # provider = "google"
