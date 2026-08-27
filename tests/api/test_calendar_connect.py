@@ -1,11 +1,13 @@
-"""The operator dashboard's Google Calendar connect flow, end to end (ADR 0014).
+"""The operator dashboard's Google Calendar connect flow, end to end (ADR 0014, 0016).
 
-Three routes, all gated by the operator login exactly like the rest of the dashboard:
+Every route here is gated by the operator login exactly like the rest of the dashboard:
 ``GET /calendars/{slug}/connect`` (redirect to Google), ``GET
-/calendars/google/callback`` (Google's redirect target), and ``POST
-/calendars/{slug}/disconnect``. The token exchange itself is a monkeypatched
-``httpx.Client`` (a scripted ``MockTransport``, same technique as every other calendar
-test in this codebase) — no network.
+/calendars/google/callback`` (Google's redirect target), ``POST
+/calendars/{slug}/disconnect``, and the two that store and drop the OAuth app credentials
+an operator entered in the browser instead of in ``config/calon.toml`` (``POST
+/calendars/{slug}/oauth-client`` and ``.../forget``, ADR 0016). The token exchange itself
+is a monkeypatched ``httpx.Client`` (a scripted ``MockTransport``, same technique as every
+other calendar test in this codebase) — no network.
 """
 
 from __future__ import annotations
@@ -292,3 +294,178 @@ class TestDashboardOverviewPanel:
             _log_in(client)
             html = client.get("/bookings").text
             assert "POST /api/v1/openflow" in html
+
+
+class TestDashboardOAuthClient:
+    """Entering the OAuth app credentials in the dashboard instead of the TOML (ADR 0016)."""
+
+    @pytest.fixture
+    def standalone(self, tmp_path: Path) -> Iterator[TestClient]:
+        """A logged-in operator on an instance with no ``[calendars]`` block at all."""
+        settings = Settings(
+            db_path=tmp_path / "calon.db",
+            config_path=None,
+            login=LOGIN,
+            base_url="http://testserver",
+        )
+        with (
+            time_machine.travel(NOW, tick=False),
+            TestClient(create_app(settings)) as test_client,
+        ):
+            _log_in(test_client)
+            yield test_client
+
+    @staticmethod
+    def _save(client: TestClient, **overrides: str) -> httpx.Response:
+        data = {
+            "client_id": "browser-cid",
+            "client_secret": "browser-secret",
+            "calendar_id": "you@example.com",
+        }
+        data.update(overrides)
+        response: httpx.Response = client.post(
+            "/calendars/default/oauth-client", data=data, follow_redirects=False
+        )
+        return response
+
+    def test_saving_credentials_makes_the_resource_connectable(
+        self, standalone: TestClient
+    ) -> None:
+        response = self._save(standalone)
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/bookings?calendar_saved=default")
+
+        html = standalone.get("/bookings").text
+        assert "Connect with Google" in html
+        assert "Not configured" not in html
+
+        # …and the connect flow uses the credentials that were typed in.
+        redirect = standalone.get("/calendars/default/connect", follow_redirects=False)
+        assert redirect.status_code == 302
+        params = parse_qs(urlsplit(redirect.headers["location"]).query)
+        assert params["client_id"] == ["browser-cid"]
+        assert params["redirect_uri"] == ["http://testserver/calendars/google/callback"]
+
+    def test_the_client_secret_is_never_rendered_back(self, standalone: TestClient) -> None:
+        self._save(standalone)
+        assert "browser-secret" not in standalone.get("/bookings").text
+
+    def test_empty_credentials_are_refused(self, standalone: TestClient) -> None:
+        response = self._save(standalone, client_id="", client_secret="")
+        assert response.status_code == 303
+        assert "calendar_error=" in response.headers["location"]
+        assert "Not configured" in standalone.get("/bookings").text
+
+    def test_a_toml_configured_resource_refuses_the_form(self, operator_client: TestClient) -> None:
+        """The file wins at resolution time, so storing a row that never applies is worse."""
+        response = self._save(operator_client)
+        assert response.status_code == 303
+        assert "calendar_error=" in response.headers["location"]
+        # The TOML's own client id is still the one the connect flow uses.
+        redirect = operator_client.get("/calendars/default/connect", follow_redirects=False)
+        params = parse_qs(urlsplit(redirect.headers["location"]).query)
+        assert params["client_id"] == ["cid"]
+
+    def test_the_full_round_trip_connects_with_the_entered_credentials(
+        self, standalone: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._save(standalone)
+        monkeypatch.setattr(
+            "calon.services.calendar_connect_service.httpx.Client",
+            lambda *args, **kwargs: _mock_token_client(),
+        )
+        state = new_oauth_state(derive_login_key(LOGIN), "default")
+
+        response = standalone.get(
+            "/calendars/google/callback",
+            params={"code": "auth-code", "state": state},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == "/bookings?calendar_connected=default"
+
+        registry = standalone.app.state.calendar_registry  # type: ignore[attr-defined]
+        provider = registry.provider_for("default")
+        assert provider is not None
+        assert provider.calendar_id == "you@example.com"
+        assert "Connected" in standalone.get("/bookings").text
+
+    def test_forget_removes_the_credentials_and_the_connection(
+        self, standalone: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._save(standalone)
+        monkeypatch.setattr(
+            "calon.services.calendar_connect_service.httpx.Client",
+            lambda *args, **kwargs: _mock_token_client(),
+        )
+        state = new_oauth_state(derive_login_key(LOGIN), "default")
+        standalone.get(
+            "/calendars/google/callback",
+            params={"code": "auth-code", "state": state},
+            follow_redirects=False,
+        )
+        registry = standalone.app.state.calendar_registry  # type: ignore[attr-defined]
+        assert registry.provider_for("default") is not None
+
+        response = standalone.post("/calendars/default/oauth-client/forget", follow_redirects=False)
+        assert response.status_code == 303
+        assert registry.provider_for("default") is None
+        assert "Not configured" in standalone.get("/bookings").text
+
+    def test_the_connection_survives_a_restart(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Boot rebuilds the provider from the stored client + credential (no TOML)."""
+        settings = Settings(
+            db_path=tmp_path / "calon.db",
+            config_path=None,
+            login=LOGIN,
+            base_url="http://testserver",
+        )
+        monkeypatch.setattr(
+            "calon.services.calendar_connect_service.httpx.Client",
+            lambda *args, **kwargs: _mock_token_client(),
+        )
+        with time_machine.travel(NOW, tick=False), TestClient(create_app(settings)) as first:
+            _log_in(first)
+            self._save(first)
+            first.get(
+                "/calendars/google/callback",
+                params={
+                    "code": "auth-code",
+                    "state": new_oauth_state(derive_login_key(LOGIN), "default"),
+                },
+                follow_redirects=False,
+            )
+
+        with time_machine.travel(NOW, tick=False), TestClient(create_app(settings)) as second:
+            registry = second.app.state.calendar_registry  # type: ignore[attr-defined]
+            assert registry.provider_for("default") is not None
+
+    def test_a_saved_client_with_no_connection_builds_no_provider(self, tmp_path: Path) -> None:
+        """Credentials alone are not a connection — standalone until the consent round trip."""
+        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        with time_machine.travel(NOW, tick=False), TestClient(create_app(settings)) as first:
+            _log_in(first)
+            self._save(first)
+
+        with time_machine.travel(NOW, tick=False), TestClient(create_app(settings)) as second:
+            registry = second.app.state.calendar_registry  # type: ignore[attr-defined]
+            assert registry.provider_for("default") is None
+
+    def test_requires_the_operator_login(self, tmp_path: Path) -> None:
+        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        with (
+            time_machine.travel(NOW, tick=False),
+            TestClient(create_app(settings)) as anonymous,
+        ):
+            saved = anonymous.post(
+                "/calendars/default/oauth-client",
+                data={"client_id": "x", "client_secret": "y", "calendar_id": ""},
+                follow_redirects=False,
+            )
+            forgotten = anonymous.post(
+                "/calendars/default/oauth-client/forget", follow_redirects=False
+            )
+            assert saved.status_code == 401
+            assert forgotten.status_code == 401

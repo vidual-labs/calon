@@ -44,6 +44,7 @@ __all__ = [
     "Booking",
     "BookingIntent",
     "CalendarCredentialRow",
+    "CalendarOAuthClientRow",
     "ResourceRow",
     "UtcDateTime",
 ]
@@ -275,6 +276,38 @@ class CalendarCredentialRow(Base):
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
     connected_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    updated_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+
+
+class CalendarOAuthClientRow(Base):
+    """A resource's OAuth *app* credentials, entered in the operator dashboard.
+
+    ADR 0016. Distinct from :class:`CalendarCredentialRow`, which holds the per-resource
+    *grant* (the refresh token) obtained by authorizing that app: this row is the app
+    itself — the ``client_id``/``client_secret`` pair from the provider's developer
+    console — for an operator who cannot conveniently edit ``config/calon.toml`` on the
+    host. A ``[calendars.<slug>]`` entry in the TOML still wins wherever it is present;
+    this table only fills in where it is absent.
+
+    ``provider`` is stored rather than assumed so Microsoft 365 can be added to the
+    dashboard flow later without a schema change; ``"google"`` is the only value the
+    connect flow writes today (ADR 0014's scope).
+
+    No column-level encryption, for the same reason ``calendar_credential`` has none (ADR
+    0014): this secret sits at the same trust level as the refresh token beside it and the
+    ``client_secret`` an operator would otherwise have put in ``config/calon.toml`` in
+    plaintext. calon has one trust boundary, the operator's own host, and ``calon.db`` is
+    inside it.
+    """
+
+    __tablename__ = "calendar_oauth_client"
+
+    resource_slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    calendar_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    client_id: Mapped[str] = mapped_column(Text, nullable=False)
+    client_secret: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     updated_at_utc: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
 
 

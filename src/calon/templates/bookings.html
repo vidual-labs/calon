@@ -63,6 +63,15 @@
     .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:7px;
            background:var(--muted); vertical-align:middle; }
     .dot.on { background:var(--ok); }
+    .setup { margin:10px 0 4px; padding:14px 16px; background:var(--bg);
+             border:1px solid var(--border); border-radius:6px; }
+    .setup label { display:block; font-size:12px; color:var(--dim); margin:10px 0 4px; }
+    .setup input { width:100%; padding:7px 10px; background:var(--panel); color:var(--fg);
+                   border:1px solid var(--border); border-radius:5px; font-size:13px;
+                   font-family:"SF Mono",Monaco,Menlo,Consolas,monospace; }
+    .setup .btn { margin-top:14px; }
+    .steps { color:var(--dim); font-size:12px; margin:0; }
+    .steps li { margin-bottom:4px; }
   </style>
 </head>
 <body>
@@ -81,6 +90,11 @@
   <main>
     {% if calendar_connected %}
       <div class="flash ok">Connected {{ calendar_connected }} to Google Calendar.</div>
+    {% endif %}
+    {% if calendar_saved %}
+      <div class="flash ok">
+        Saved the OAuth client for {{ calendar_saved }}. Now click Connect with Google.
+      </div>
     {% endif %}
     {% if calendar_error %}
       <div class="flash err">{{ calendar_error }}</div>
@@ -194,6 +208,7 @@
           <div>
             <span class="name">{{ cal.resource_slug }}</span>
             {% if cal.provider %}<span class="provider">{{ cal.provider }}</span>{% endif %}
+            {% if cal.calendar_id %}<span class="provider mono">{{ cal.calendar_id }}</span>{% endif %}
             {% if cal.connected %}
               <span class="status confirmed">Connected</span>
             {% elif cal.configured %}
@@ -203,6 +218,11 @@
             {% endif %}
           </div>
           <div>
+            {% if cal.source == "dashboard" %}
+              <form method="post" action="/calendars/{{ cal.resource_slug }}/oauth-client/forget" style="display:inline">
+                <button type="submit" class="btn secondary">Forget credentials</button>
+              </form>
+            {% endif %}
             {% if cal.connected %}
               <form method="post" action="/calendars/{{ cal.resource_slug }}/disconnect" style="display:inline">
                 <button type="submit" class="btn secondary">Disconnect</button>
@@ -215,23 +235,43 @@
           </div>
         </div>
         {% if not cal.configured %}
-          <details>
-            <summary>How to connect this resource's Google Calendar</summary>
-            <p class="hint" style="margin-top:10px">
-              1. In Google Cloud Console, enable the Calendar API and create an OAuth client
-              of type <em>Web application</em>, with
-              <span class="mono">{{ google_callback_url }}</span> as an authorized redirect URI.<br>
-              2. Add the block below to <code>config/calon.toml</code> with that client's id
-              and secret, and restart calon.<br>
-              3. Come back here and click <em>Connect with Google</em>.
-            </p>
+          <div class="setup">
+            <ol class="steps">
+              <li>In Google Cloud Console, enable the <strong>Calendar API</strong> and create an
+                OAuth client of type <em>Web application</em>, with
+                <span class="mono">{{ google_callback_url }}</span> as an authorized redirect URI.</li>
+              <li>Paste that client's id and secret below.</li>
+              <li>Click <em>Save and enable connecting</em>, then <em>Connect with Google</em>.</li>
+            </ol>
+            <form method="post" action="/calendars/{{ cal.resource_slug }}/oauth-client">
+              <label for="client_id-{{ cal.resource_slug }}">OAuth client id</label>
+              <input id="client_id-{{ cal.resource_slug }}" name="client_id" required
+                     autocomplete="off" spellcheck="false"
+                     placeholder="1234567890-abc.apps.googleusercontent.com">
+              <label for="client_secret-{{ cal.resource_slug }}">OAuth client secret</label>
+              <input id="client_secret-{{ cal.resource_slug }}" name="client_secret" type="password"
+                     required autocomplete="off" placeholder="GOCSPX-...">
+              <label for="calendar_id-{{ cal.resource_slug }}">
+                Calendar id &mdash; the account's email, or blank for its primary calendar
+              </label>
+              <input id="calendar_id-{{ cal.resource_slug }}" name="calendar_id"
+                     autocomplete="off" spellcheck="false" placeholder="you@example.com">
+              <button type="submit" class="btn">Save and enable connecting</button>
+            </form>
+            <details>
+              <summary style="margin-top:14px">Prefer the config file?</summary>
+              <p class="hint" style="margin-top:10px">
+                Add this to <code>config/calon.toml</code> and restart calon instead. An entry
+                there always wins over anything entered here.
+              </p>
 <pre>[calendars.{{ cal.resource_slug }}]
 provider = "google"
 calendar_id = "you@example.com"
 enabled = true
 client_id = "..."
 client_secret = "..."</pre>
-          </details>
+            </details>
+          </div>
         {% endif %}
       {% endfor %}
     </section>

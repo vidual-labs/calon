@@ -29,6 +29,7 @@ from calon.intake.external import SourceRegistry
 from calon.migrate import upgrade_to_head
 from calon.models import CalendarCredentialRow
 from calon.security import LoginStore
+from calon.services import calendar_connect_service
 from calon.services.provisioning import sync_operator_config
 from calon.web import router as web_router
 
@@ -83,6 +84,18 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
                 row.resource_slug: row.refresh_token
                 for row in session.scalars(sa.select(CalendarCredentialRow))
             }
+            # ADR 0016: a resource whose OAuth app credentials were entered in the
+            # dashboard rather than the TOML is configured here too, so the connection
+            # survives a restart. The TOML still wins where it has an entry. A client
+            # with no credential yet is deliberately left out: a provider that can never
+            # refresh is worse than no provider, which is simply the standalone default.
+            calendar_configs = {
+                slug: cfg
+                for slug, cfg in calendar_connect_service.configured_calendars(
+                    session, resolved_config
+                ).items()
+                if slug in resolved_config.calendars or slug in connected_refresh_tokens
+            }
 
         app.state.db = database
         app.state.settings = resolved_settings
@@ -109,7 +122,7 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
         # gets an empty registry — every provider call degrades to calon-only
         # availability, which is exactly today's behaviour (CLAUDE.md §2).
         calendar_registry = CalendarProviderRegistry.from_config(
-            resolved_config.calendars, refresh_token_overrides=connected_refresh_tokens
+            calendar_configs, refresh_token_overrides=connected_refresh_tokens
         )
         app.state.calendar_registry = calendar_registry
         logger.info(

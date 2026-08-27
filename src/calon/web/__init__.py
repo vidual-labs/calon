@@ -11,6 +11,9 @@ Routes:
 * ``POST /login``     — verifies the entered login and sets a session cookie.
 * ``POST /logout``    — ends the session and redirects to the login form.
 * ``GET  /bookings``  — the operator dashboard.
+* ``POST /calendars/{resource_slug}/oauth-client``        — store the OAuth app credentials
+  an operator entered in the dashboard (ADR 0016).
+* ``POST /calendars/{resource_slug}/oauth-client/forget``  — drop them again.
 * ``GET  /calendars/{resource_slug}/connect``    — start the Google connect flow (ADR 0014).
 * ``GET  /calendars/google/callback``            — Google's redirect target.
 * ``POST /calendars/{resource_slug}/disconnect`` — drop a resource's stored credential.
@@ -41,7 +44,12 @@ from calon.calendars import CalendarProviderError
 from calon.clock import utcnow
 from calon.config import OperatorConfig, Settings
 from calon.intake import native
-from calon.models import Booking, BookingIntent, CalendarCredentialRow
+from calon.models import (
+    Booking,
+    BookingIntent,
+    CalendarCredentialRow,
+    CalendarOAuthClientRow,
+)
 from calon.schemas import BookingIntentIn, CalendarHandoff, CalendarLinksOut, RequesterIn
 from calon.security import SESSION_COOKIE, derive_login_key, verify_oauth_state
 from calon.services import booking_service, calendar_connect_service
@@ -385,6 +393,7 @@ def dashboard(
             "calendars": calendars,
             "google_callback_url": _google_callback_url(settings),
             "calendar_connected": request.query_params.get("calendar_connected"),
+            "calendar_saved": request.query_params.get("calendar_saved"),
             "calendar_error": request.query_params.get("calendar_error"),
         },
     )
@@ -403,18 +412,21 @@ def _google_callback_url(settings: Settings) -> str:
 def calendar_connect(
     resource_slug: str,
     request: Request,
+    database: DatabaseDep,
     settings: SettingsDep,
     _operator: AuthorisedOperator,
 ) -> Response:
     """Redirect the operator's browser to Google's consent screen (ADR 0014)."""
     config: OperatorConfig = request.app.state.config
     try:
-        url = calendar_connect_service.start_connect(
-            config,
-            resource_slug=resource_slug,
-            redirect_uri=_google_callback_url(settings),
-            signing_key=derive_login_key(settings.login),
-        )
+        with database.read() as session:
+            url = calendar_connect_service.start_connect(
+                session,
+                config,
+                resource_slug=resource_slug,
+                redirect_uri=_google_callback_url(settings),
+                signing_key=derive_login_key(settings.login),
+            )
     except calendar_connect_service.CalendarNotConfiguredError as exc:
         return RedirectResponse(
             f"/bookings?calendar_error={quote_plus(str(exc))}",
@@ -493,6 +505,69 @@ def calendar_disconnect(
     with database.write() as session:
         calendar_connect_service.disconnect(session, calendar_registry, resource_slug=resource_slug)
     return RedirectResponse("/bookings", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/calendars/{resource_slug}/oauth-client", name="calendar_oauth_client_save")
+async def calendar_oauth_client_save(
+    resource_slug: str,
+    request: Request,
+    database: DatabaseDep,
+    _operator: AuthorisedOperator,
+) -> Response:
+    """Store the Google OAuth app credentials the operator typed into the dashboard.
+
+    ADR 0016. This is the step that used to require editing ``config/calon.toml`` on the
+    host and restarting; storing the pair here makes the resource connectable immediately,
+    and the consent round trip that follows is the unchanged ADR 0014 flow.
+
+    A resource that already has a ``[calendars.<slug>]`` entry is refused rather than
+    written: the file wins at resolution time anyway, so accepting the form would store a
+    credential that never takes effect.
+    """
+    config: OperatorConfig = request.app.state.config
+    if resource_slug in config.calendars:
+        return _dashboard_error(
+            f"{resource_slug} is configured in config/calon.toml; edit it there instead"
+        )
+
+    form = await request.form()
+
+    def _field(name: str) -> str:
+        value = form.get(name, "")
+        return value.strip() if isinstance(value, str) else ""
+
+    try:
+        with database.write() as session:
+            calendar_connect_service.save_oauth_client(
+                session,
+                resource_slug=resource_slug,
+                client_id=_field("client_id"),
+                client_secret=_field("client_secret"),
+                calendar_id=_field("calendar_id"),
+                now=utcnow(),
+            )
+    except calendar_connect_service.CalendarNotConfiguredError as exc:
+        return _dashboard_error(str(exc))
+
+    return RedirectResponse(
+        f"/bookings?calendar_saved={quote_plus(resource_slug)}#calendars",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/calendars/{resource_slug}/oauth-client/forget", name="calendar_oauth_client_forget")
+def calendar_oauth_client_forget(
+    resource_slug: str,
+    database: DatabaseDep,
+    calendar_registry: CalendarRegistryDep,
+    _operator: AuthorisedOperator,
+) -> Response:
+    """Remove dashboard-entered OAuth credentials, and any connection built on them."""
+    with database.write() as session:
+        calendar_connect_service.forget_oauth_client(
+            session, calendar_registry, resource_slug=resource_slug
+        )
+    return RedirectResponse("/bookings#calendars", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +650,14 @@ def _overview(
     }
 
 
+def _dashboard_error(message: str) -> RedirectResponse:
+    """Back to the dashboard with the message in the error banner."""
+    return RedirectResponse(
+        f"/bookings?calendar_error={quote_plus(message)}#calendars",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict[str, object]]:
     """One row per resource, whether or not it has a ``[calendars.<slug>]`` entry.
 
@@ -588,15 +671,18 @@ def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict
     only, per ADR 0014's scope) so the template can render the right action without
     guessing from the provider name itself.
     """
+    clients = {row.resource_slug: row for row in session.query(CalendarOAuthClientRow).all()}
     rows: list[dict[str, object]] = []
-    for slug in sorted({config.resource.slug} | set(config.calendars)):
-        cfg = config.calendars.get(slug)
+    for slug in sorted({config.resource.slug} | set(config.calendars) | set(clients)):
+        cfg = calendar_connect_service.resolve_calendar_config(session, config, slug)
         if cfg is None:
             rows.append(
                 {
                     "resource_slug": slug,
                     "provider": None,
                     "configured": False,
+                    "source": None,
+                    "calendar_id": None,
                     "connectable": False,
                     "connected": False,
                     "connected_at": None,
@@ -609,6 +695,11 @@ def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict
                 "resource_slug": slug,
                 "provider": cfg.provider,
                 "configured": True,
+                # Which source the credentials came from, so the row can offer the right
+                # action: only a dashboard-entered client can be edited or forgotten from
+                # the dashboard (ADR 0016 — the TOML is never written by calon).
+                "source": "config" if slug in config.calendars else "dashboard",
+                "calendar_id": cfg.calendar_id,
                 "connectable": cfg.provider == "google",
                 "connected": credential is not None,
                 "connected_at": (

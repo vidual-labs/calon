@@ -57,45 +57,64 @@ def _mock_client(refresh_token: str = "fresh-refresh-token") -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
+#: ``start_connect`` reads the dashboard-entered OAuth client (ADR 0016) when the TOML has
+#: no entry, so it needs a session even in the cases that never reach the database.
+_REDIRECT_URI = "https://calon.example.com/calendars/google/callback"
+
+
 class TestStartConnect:
-    def test_builds_a_google_consent_url(self) -> None:
-        url = calendar_connect_service.start_connect(
-            _config(),
-            resource_slug="default",
-            redirect_uri="https://calon.example.com/calendars/google/callback",
-            signing_key=b"0" * 32,
-        )
+    def test_builds_a_google_consent_url(self, client: TestClient, database: Database) -> None:
+        with database.read() as session:
+            url = calendar_connect_service.start_connect(
+                session,
+                _config(),
+                resource_slug="default",
+                redirect_uri=_REDIRECT_URI,
+                signing_key=b"0" * 32,
+            )
         assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
         assert "client_id=cid" in url
 
-    def test_an_unconfigured_resource_raises(self) -> None:
-        with pytest.raises(calendar_connect_service.CalendarNotConfiguredError, match="default"):
-            calendar_connect_service.start_connect(
-                OperatorConfig(),
-                resource_slug="default",
-                redirect_uri="https://calon.example.com/calendars/google/callback",
-                signing_key=b"0" * 32,
-            )
-
-    def test_a_microsoft_resource_raises(self) -> None:
-        config = _config(provider="microsoft")
-        with pytest.raises(
-            calendar_connect_service.CalendarNotConfiguredError, match="Google only"
+    def test_an_unconfigured_resource_raises(self, client: TestClient, database: Database) -> None:
+        with (
+            database.read() as session,
+            pytest.raises(calendar_connect_service.CalendarNotConfiguredError, match="default"),
         ):
             calendar_connect_service.start_connect(
-                config,
+                session,
+                OperatorConfig(),
                 resource_slug="default",
-                redirect_uri="https://calon.example.com/calendars/google/callback",
+                redirect_uri=_REDIRECT_URI,
                 signing_key=b"0" * 32,
             )
 
-    def test_missing_client_credentials_raises(self) -> None:
-        config = _config(client_id="", client_secret="")
-        with pytest.raises(calendar_connect_service.CalendarNotConfiguredError, match="client_id"):
+    def test_a_microsoft_resource_raises(self, client: TestClient, database: Database) -> None:
+        config = _config(provider="microsoft")
+        with (
+            database.read() as session,
+            pytest.raises(calendar_connect_service.CalendarNotConfiguredError, match="Google only"),
+        ):
             calendar_connect_service.start_connect(
+                session,
                 config,
                 resource_slug="default",
-                redirect_uri="https://calon.example.com/calendars/google/callback",
+                redirect_uri=_REDIRECT_URI,
+                signing_key=b"0" * 32,
+            )
+
+    def test_missing_client_credentials_raises(
+        self, client: TestClient, database: Database
+    ) -> None:
+        config = _config(client_id="", client_secret="")
+        with (
+            database.read() as session,
+            pytest.raises(calendar_connect_service.CalendarNotConfiguredError, match="client_id"),
+        ):
+            calendar_connect_service.start_connect(
+                session,
+                config,
+                resource_slug="default",
+                redirect_uri=_REDIRECT_URI,
                 signing_key=b"0" * 32,
             )
 

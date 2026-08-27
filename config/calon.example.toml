@@ -210,6 +210,10 @@ organizer_email = ""
 #                registration). Both are required whenever enabled = true —
 #                without them the provider can never refresh an access token,
 #                so calon refuses to start rather than silently never syncing.
+#                For Google you can skip this whole block instead and enter the
+#                same two values in the operator dashboard's Calendars panel,
+#                which needs no file edit and no restart (ADR 0016). A block
+#                here always wins over what was entered there.
 # refresh_token  the OAuth refresh token for this account. For Google, you can
 #                leave this blank and instead click "Connect with Google" on
 #                the operator dashboard (/bookings) after setting client_id/
