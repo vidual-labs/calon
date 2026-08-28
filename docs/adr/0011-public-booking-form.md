@@ -1,6 +1,8 @@
 # 11. The public booking form is a thin wrapper over `submit_intent`, not a second path
 
-- **Status:** Accepted
+- **Status:** Accepted — the no-JavaScript constraint is revised by
+  [ADR 0018](0018-booking-widget-day-and-time-picker.md), which adds the day-and-time
+  picker as progressive enhancement; everything else here still holds
 - **Date:** 2026-08-18
 
 ## Context

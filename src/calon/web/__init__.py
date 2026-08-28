@@ -91,16 +91,29 @@ def _book_ctx(
 
 
 def _form_context(request: Request) -> dict[str, Any]:
-    """Build the template context shared by GET and POST /book."""
+    """Build the template context shared by GET and POST /book.
+
+    Beyond what the plain form needs, this carries what the day-and-time picker reads
+    off the widget element: the resource slug and duration it queries
+    ``GET /api/v1/availability`` with, and today's date *in the resource timezone* so
+    the month grid opens on the right month whatever timezone the browser is in. The
+    picker is progressive enhancement — with scripting off, or if that request fails,
+    the date and time inputs are still there and the POST is unchanged (ADR 0018).
+    """
     config = request.app.state.config
     policy = config.policy
+    zone = ZoneInfo(config.resource.timezone)
     return {
         "instance_name": config.instance_name,
         "resource_name": config.resource_name,
+        "resource_slug": config.resource.slug,
         "timezone": config.resource.timezone,
         "window_start": policy.window_start.strftime("%H:%M"),
         "window_end": policy.window_end.strftime("%H:%M"),
         "duration_label": str(policy.default_duration_min),
+        "duration_min": policy.default_duration_min,
+        "max_advance_days": policy.max_advance_days,
+        "today": utcnow().astimezone(zone).date().isoformat(),
     }
 
 

@@ -99,7 +99,9 @@ untouched.
   transaction around the decide-and-insert is sufficient and correct. See
   [ADR 0003](adr/0003-sqlite-for-mvp.md).
 - **A JavaScript SPA.** A build toolchain and a second deployment artifact, to render two
-  forms. It would make calon harder to self-host, which is the opposite of the goal.
+  forms. It would make calon harder to self-host, which is the opposite of the goal. The
+  booking page's day-and-time picker is one inline script with no framework and no build
+  step, and the page still works without it ([ADR 0018](adr/0018-booking-widget-day-and-time-picker.md)).
 - **A task queue (Celery, Redis, workers).** Nothing in the MVP is asynchronous.
 - **Direct calendar-provider writes as the first milestone.** OAuth applications, consent
   screens, per-provider token storage and refresh, and vendor review — more work than the
