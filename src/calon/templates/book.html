@@ -4,111 +4,193 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>calon — Book a slot</title>
+  <script>
+    /* Set before first paint so the enhanced widget never flashes the plain form. */
+    document.documentElement.classList.add("js");
+  </script>
   <style>
-    :root { --bg:#0f1116; --panel:#181c24; --fg:#e6e8ee; --dim:#8a93a6;
-            --accent:#5aa9ff; --ok:#51cf66; --err:#ff6b6b; --border:#242a36; }
+    :root { --bg:#0f1116; --panel:#181c24; --panel-2:#131720; --fg:#e6e8ee; --dim:#8a93a6;
+            --accent:#5aa9ff; --ok:#51cf66; --err:#ff6b6b; --border:#242a36; --border-2:#2a3140; }
     * { box-sizing: border-box; }
     body { margin:0; background:var(--bg); color:var(--fg);
            font:15px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif; }
     header { display:flex; align-items:center; justify-content:space-between;
              padding:16px 28px; border-bottom:1px solid var(--border); }
     header .brand { font-size:18px; font-weight:600; }
+    header .brand span { color:var(--dim); font-size:13px; margin-left:8px; font-weight:400; }
     header nav a { color:var(--dim); text-decoration:none; font-size:13px; }
     header nav a:hover { color:var(--fg); }
-    main { max-width:540px; margin:0 auto; padding:32px 20px 60px; }
-    h1 { font-size:22px; font-weight:600; margin:0 0 4px; }
-    .sub { color:var(--dim); font-size:13px; margin-bottom:28px; }
+    main { max-width:1000px; margin:0 auto; padding:32px 20px 60px; }
+    a { color:var(--accent); }
+
+    /* ---- the booking card ------------------------------------------------ */
+    .widget { display:grid; grid-template-columns:280px 1fr 232px;
+              background:var(--panel); border:1px solid var(--border);
+              border-radius:14px; overflow:hidden; min-height:460px; }
+    .pane { padding:22px 24px; }
+    .pane + .pane { border-left:1px solid var(--border); }
+
+    /* left: what is being booked */
+    .pane-about h1 { font-size:21px; font-weight:600; margin:2px 0 10px; letter-spacing:-.01em; }
+    .pane-about .host { font-size:13px; color:var(--dim); font-weight:500; }
+    .pane-about .blurb { font-size:13px; color:var(--dim); margin:0 0 20px; }
+    .facts { list-style:none; margin:0; padding:0; font-size:13.5px; }
+    .facts li { display:flex; gap:9px; align-items:flex-start; margin-bottom:10px; }
+    .facts svg { flex:none; width:15px; height:15px; margin-top:2px; stroke:var(--dim);
+                 fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .facts .val { color:var(--fg); }
+    .facts .sub { display:block; color:var(--dim); font-size:12px; }
+
+    /* middle: the month grid */
+    .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+    .cal-head .month { font-size:16px; font-weight:600; }
+    .cal-head .month .year { color:var(--dim); font-weight:400; margin-left:6px; }
+    .cal-nav button { background:none; border:1px solid transparent; color:var(--dim);
+                      width:30px; height:30px; border-radius:7px; cursor:pointer; font-size:15px;
+                      line-height:1; }
+    .cal-nav button:hover:not(:disabled) { background:var(--panel-2); color:var(--fg); }
+    .cal-nav button:disabled { opacity:.3; cursor:default; }
+    .dow, .days { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
+    .dow { margin-bottom:6px; }
+    .dow span { text-align:center; font-size:11px; font-weight:600; letter-spacing:.06em;
+                text-transform:uppercase; color:var(--dim); }
+    .day { position:relative; aspect-ratio:1/1; border:none; border-radius:8px;
+           background:transparent; color:var(--dim); font-size:14px; font-weight:500;
+           cursor:default; font-family:inherit; }
+    .day.free { background:var(--panel-2); color:var(--fg); cursor:pointer; }
+    .day.free:hover { background:#1d2330; }
+    .day.selected { background:var(--accent); color:#0b1322; font-weight:600; }
+    .day.selected:hover { background:var(--accent); }
+    .day.today::after { content:""; position:absolute; left:50%; bottom:7px; width:4px; height:4px;
+                        margin-left:-2px; border-radius:50%; background:var(--accent); }
+    .day.selected.today::after { background:#0b1322; }
+    .day .mon { position:absolute; top:5px; left:0; right:0; font-size:9px; letter-spacing:.05em;
+                text-transform:uppercase; color:var(--dim); }
+    .cal-note { margin-top:14px; font-size:12px; color:var(--dim); min-height:18px; }
+
+    /* right: the times */
+    .slots-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+    .slots-head .picked-day { font-size:14px; font-weight:600; }
+    .slots-head .picked-day .dim { color:var(--dim); font-weight:400; }
+    .hourfmt { display:inline-flex; background:var(--panel-2); border-radius:7px; padding:2px; }
+    .hourfmt button { border:none; background:none; color:var(--dim); font:inherit; font-size:11.5px;
+                      padding:3px 8px; border-radius:5px; cursor:pointer; }
+    .hourfmt button[aria-pressed="true"] { background:#242a36; color:var(--fg); }
+    .slot-list { display:flex; flex-direction:column; gap:8px; flex:1; min-height:0;
+                 overflow-y:auto; padding-right:4px; }
+    .slot { width:100%; flex:none; padding:10px 0; border:1px solid var(--border-2); border-radius:8px;
+            background:var(--panel-2); color:var(--fg); font:inherit; font-size:14px;
+            font-weight:500; cursor:pointer; }
+    .slot:hover { border-color:var(--accent); color:var(--accent); }
+    .slot-empty { font-size:13px; color:var(--dim); padding-top:6px; }
+
+    /* details step */
+    .pane-details { grid-column:2 / -1; }
+    .pane-details form { max-width:560px; }
+    .picked { display:flex; align-items:center; justify-content:space-between; gap:12px;
+              background:var(--panel-2); border:1px solid var(--border-2); border-radius:9px;
+              padding:11px 14px; margin-bottom:20px; font-size:14px; }
+    .picked .when { font-weight:600; }
+    .picked .tz { color:var(--dim); font-weight:400; font-size:12.5px; margin-left:6px; }
+    .picked button { background:none; border:none; color:var(--accent); font:inherit;
+                     font-size:13px; cursor:pointer; padding:0; }
 
     /* form */
-    .field { margin-bottom:18px; }
+    .field { margin-bottom:16px; }
     label { display:block; font-size:13px; color:var(--dim); margin-bottom:5px; }
-    input, textarea { width:100%; padding:10px 12px; border-radius:8px;
-       border:1px solid #2a3140; background:#0c0f15; color:var(--fg);
-       font-size:15px; outline:none; }
+    input, textarea { width:100%; padding:9px 12px; border-radius:8px;
+       border:1px solid var(--border-2); background:#0c0f15; color:var(--fg);
+       font-size:14.5px; font-family:inherit; outline:none; }
     input:focus, textarea:focus { border-color:var(--accent); }
-    textarea { min-height:72px; resize:vertical; }
+    textarea { min-height:70px; resize:vertical; }
     .row { display:flex; gap:14px; }
     .row .field { flex:1; }
-    button[type=submit] { margin-top:8px; width:100%; padding:11px 0; border:none;
+    button[type=submit] { margin-top:4px; padding:10px 22px; border:none;
        border-radius:8px; background:var(--accent); color:#0b1322;
-       font-weight:600; font-size:14px; cursor:pointer; }
+       font-weight:600; font-size:14px; font-family:inherit; cursor:pointer; }
     button[type=submit]:hover { filter:brightness(1.06); }
     .hint { font-size:12px; color:var(--dim); margin-top:4px; }
+    .req { color:var(--err); }
+    .opt { color:var(--dim); font-size:12px; }
 
     /* banners */
-    .banner { margin-bottom:24px; padding:12px 14px; border-radius:8px; font-size:14px; }
+    .banner { margin-bottom:20px; padding:12px 14px; border-radius:9px; font-size:14px; }
     .banner.error    { background:rgba(255,107,107,.12); border:1px solid rgba(255,107,107,.4);  color:var(--err); }
     .banner.success  { background:rgba(81,207,102,.12);  border:1px solid rgba(81,207,102,.4);   color:var(--ok); }
     .banner ul { margin:6px 0 0; padding-left:18px; }
     .banner li { margin-bottom:2px; }
 
-    /* success block */
-    .success-block { margin-top:20px; }
-    .success-block .slot { font-size:16px; font-weight:600; margin-bottom:12px; }
-    .success-block .slot .mono { font-family:"SF Mono",Monaco,Menlo,Consolas,monospace; font-size:14px; color:var(--fg); }
-    .cal-links { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+    /* confirmation card */
+    .confirm { max-width:560px; margin:0 auto; background:var(--panel);
+               border:1px solid var(--border); border-radius:14px; padding:28px 30px; }
+    .confirm h1 { font-size:20px; font-weight:600; margin:0 0 6px; }
+    .confirm .tick { width:44px; height:44px; border-radius:50%; margin-bottom:16px;
+                     background:rgba(81,207,102,.14); color:var(--ok); display:flex;
+                     align-items:center; justify-content:center; font-size:22px; }
+    .confirm dl { display:grid; grid-template-columns:auto 1fr; gap:8px 18px; margin:20px 0 0;
+                  font-size:14px; border-top:1px solid var(--border); padding-top:18px; }
+    .confirm dt { color:var(--dim); }
+    .confirm dd { margin:0; }
+    .mono { font-family:"SF Mono",Monaco,Menlo,Consolas,monospace; font-size:13px; }
+    .cal-links { display:flex; flex-wrap:wrap; gap:10px; margin-top:22px; }
     .cal-links a { display:inline-block; padding:8px 14px; border-radius:8px;
        text-decoration:none; font-size:13px; font-weight:500; }
     .cal-links a.ics    { background:rgba(90,169,255,.14); color:var(--accent); border:1px solid rgba(90,169,255,.4); }
     .cal-links a.google { background:rgba(81,207,102,.14); color:var(--ok);     border:1px solid rgba(81,207,102,.4); }
     .cal-links a.outlook{ background:rgba(255,180,80,.14); color:#ffb450;       border:1px solid rgba(255,180,80,.4); }
     .cal-links a:hover { filter:brightness(1.1); }
-    .booking-id { margin-top:10px; font-size:12px; color:var(--dim); }
+    .again { margin-top:22px; font-size:13px; color:var(--dim); }
+
+    .footmark { text-align:center; color:var(--dim); font-size:13px; margin-top:18px; }
+
+    /* ---- progressive enhancement ---------------------------------------- */
+    /* No JavaScript: the plain date/time form is the whole widget, exactly as before. */
+    .pane-calendar, .pane-slots, .picked { display:none; }
+    .js .pane-calendar { display:block; }
+    .js .pane-slots { display:flex; flex-direction:column; overflow:hidden; }
+    /* While a day is being picked the card keeps one screenful of height and the times
+       scroll inside it; the details step is free to be as tall as the form needs. */
+    .js .widget[data-step="pick"] { grid-template-rows:minmax(0,1fr); max-height:560px; }
+    .js .pane-details { display:none; }
+    .js .fallback-datetime { display:none; }
+    .js .picked { display:flex; }
+    .js .widget[data-step="details"] .pane-calendar,
+    .js .widget[data-step="details"] .pane-slots { display:none; }
+    .js .widget[data-step="details"] .pane-details { display:block; }
+
+    @media (max-width:860px) {
+      .widget, .js .widget[data-step="pick"] { grid-template-columns:1fr;
+               grid-template-rows:none; max-height:none; }
+      .pane + .pane { border-left:none; border-top:1px solid var(--border); }
+      .pane-details { grid-column:1; }
+      .pane-slots, .js .pane-slots { overflow:visible; }
+      .slot-list { flex:none; }
+    }
   </style>
 </head>
 <body>
   <header>
-    <div class="brand">calon <span style="color:var(--dim);font-size:13px;margin-left:8px;">{{ instance_name }}</span></div>
+    <div class="brand">calon <span>{{ instance_name }}</span></div>
     <nav>
       <a href="/docs">API docs</a>
     </nav>
   </header>
 
   <main>
-    <h1>Book a slot</h1>
-    <div class="sub">{{ instance_name }} · {{ resource_name }} · times in {{ timezone }}</div>
 
-    {# ---- validation error banner (form-level) ---- #}
-    {% if errors %}
-    <div class="banner error">
-      <strong>Please fix the following:</strong>
-      <ul>
-        {% for err in errors %}<li>{{ err }}</li>{% endfor %}
-      </ul>
-    </div>
-    {% endif %}
-
-    {# ---- rejection banner (scheduling decision) ---- #}
-    {% if decision and decision.outcome == "rejected" %}
-    <div class="banner error">
-      <strong>This time cannot be booked.</strong>
-      <p style="margin:6px 0 0;">{{ decision.reason }}</p>
-      {% if decision.violations %}
-      <ul>
-        {% for v in decision.violations %}<li>{{ v.message }}</li>{% endfor %}
-      </ul>
-      {% endif %}
-      {% if decision.suggestions %}
-      <p style="margin:10px 0 0;"><strong>Next available:</strong></p>
-      <ul>
-        {% for s in decision.suggestions %}
-        <li>{{ s.start.strftime("%a %d %b %Y %H:%M") }} – {{ s.end.strftime("%H:%M") }} ({{ s.timezone }})</li>
-        {% endfor %}
-      </ul>
-      {% endif %}
-    </div>
-    {% endif %}
-
-    {# ---- success block ---- #}
+    {# ---- success: the confirmation card ---- #}
     {% if success %}
-    <div class="banner success">
-      <strong>Booked.</strong> Your slot is confirmed — add it to your calendar below.
-    </div>
-    <div class="success-block">
-      <div class="slot">
-        <span class="mono">{{ success.start }} – {{ success.end }}</span>
-        <span style="color:var(--dim);font-size:13px;margin-left:8px;">({{ success.timezone }})</span>
+    <div class="confirm">
+      <div class="tick">✓</div>
+      <div class="banner success" style="margin-bottom:0;">
+        <strong>Booked.</strong> Your slot is confirmed — add it to your calendar below.
       </div>
+      <dl>
+        <dt>What</dt><dd>{{ resource_name }} · {{ duration_label }} min</dd>
+        <dt>When</dt><dd><span class="mono">{{ success.start }} – {{ success.end }}</span>
+                         <span style="color:var(--dim);font-size:12.5px;">({{ success.timezone }})</span></dd>
+        <dt>Booking reference</dt><dd><span class="mono">{{ success.booking_id }}</span></dd>
+      </dl>
       <div class="cal-links">
         {% if success.handoff %}
         <a class="ics"     href="{{ success.handoff.ics_url }}" target="_blank">Download .ics</a>
@@ -116,67 +198,427 @@
         <a class="outlook" href="{{ success.handoff.links.outlook_office }}" target="_blank">Outlook</a>
         {% endif %}
       </div>
-      <div class="booking-id">Booking reference: <span style="font-family:monospace;">{{ success.booking_id }}</span></div>
+      <p class="again">Need something else? <a href="/book">Book another slot</a></p>
     </div>
-    <p style="margin-top:28px;color:var(--dim);font-size:13px;">
-      Need to book something else?
-      <form method="post" action="/book" style="display:inline">
-        <button type="submit" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:13px;padding:0;text-decoration:underline;">Book another slot</button>
-      </form>
-    </p>
+
     {% else %}
 
-    {# ---- the form (always shown on GET and on rejection) ---- #}
-    <form method="post" action="/book">
-      <div class="row">
-        <div class="field">
-          <label for="name">Your name <span style="color:var(--err)">*</span></label>
-          <input type="text" id="name" name="name" maxlength="200" required
-                 value="{{ form.name if form else '' }}" autocomplete="name">
+    {# ---- the widget: pick a day, pick a time, then enter details ---- #}
+    <div class="widget" id="widget"
+         data-step="{{ 'details' if (errors or decision) else 'pick' }}"
+         data-resource="{{ resource_slug }}"
+         data-timezone="{{ timezone }}"
+         data-duration="{{ duration_min }}"
+         data-today="{{ today }}"
+         data-horizon="{{ max_advance_days }}">
+
+      <div class="pane pane-about">
+        <div class="host">{{ instance_name }}</div>
+        <h1>{{ resource_name }}</h1>
+        <p class="blurb">Pick a day and a time that suits you. You will get a calendar
+           invite as soon as the slot is confirmed.</p>
+        <ul class="facts">
+          <li>
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            <span class="val">{{ duration_label }} min</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg>
+            <span class="val">{{ timezone }}</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+            <span class="val">{{ window_start }} – {{ window_end }}
+              <span class="sub">on the days this instance is open</span></span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="pane pane-calendar">
+        <div class="cal-head">
+          <div class="month" data-month-label>&nbsp;</div>
+          <div class="cal-nav">
+            <button type="button" data-prev-month aria-label="Previous month">‹</button>
+            <button type="button" data-next-month aria-label="Next month">›</button>
+          </div>
         </div>
-        <div class="field">
-          <label for="email">Email <span style="color:var(--err)">*</span></label>
-          <input type="email" id="email" name="email" maxlength="320" required
-                 value="{{ form.email if form else '' }}" autocomplete="email">
+        <div class="dow">
+          <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span>
+          <span>Fri</span><span>Sat</span><span>Sun</span>
         </div>
+        <div class="days" data-days></div>
+        <div class="cal-note" data-cal-note></div>
       </div>
 
-      <div class="field">
-        <label for="phone">Phone <span style="color:var(--dim)">optional</span></label>
-        <input type="tel" id="phone" name="phone" maxlength="64"
-               value="{{ form.phone if form else '' }}" autocomplete="tel">
-      </div>
-
-      <div class="row">
-        <div class="field">
-          <label for="date">Date <span style="color:var(--err)">*</span></label>
-          <input type="date" id="date" name="date" required
-                 value="{{ form.date if form else '' }}">
+      <div class="pane pane-slots">
+        <div class="slots-head">
+          <div class="picked-day" data-slots-day>&nbsp;</div>
+          <div class="hourfmt" role="group" aria-label="Time format">
+            <button type="button" data-hour="12" aria-pressed="false">12h</button>
+            <button type="button" data-hour="24" aria-pressed="true">24h</button>
+          </div>
         </div>
-        <div class="field">
-          <label for="time">Time <span style="color:var(--err)">*</span></label>
-          <input type="time" id="time" name="time" step="900" required
-                 value="{{ form.time if form else '' }}">
-          <div class="hint">Booking window: {{ window_start }} – {{ window_end }} {{ timezone }} · {{ duration_label }} min</div>
+        <div class="slot-list" data-slot-list></div>
+      </div>
+
+      <div class="pane pane-details">
+
+        {# ---- validation error banner (form-level) ---- #}
+        {% if errors %}
+        <div class="banner error">
+          <strong>Please fix the following:</strong>
+          <ul>
+            {% for err in errors %}<li>{{ err }}</li>{% endfor %}
+          </ul>
         </div>
-      </div>
+        {% endif %}
 
-      <div class="field">
-        <label for="subject">Subject <span style="color:var(--err)">*</span></label>
-        <input type="text" id="subject" name="subject" maxlength="300" required
-               value="{{ form.subject if form else '' }}">
-      </div>
+        {# ---- rejection banner (scheduling decision) ---- #}
+        {% if decision and decision.outcome == "rejected" %}
+        <div class="banner error">
+          <strong>This time cannot be booked.</strong>
+          <p style="margin:6px 0 0;">{{ decision.reason }}</p>
+          {% if decision.violations %}
+          <ul>
+            {% for v in decision.violations %}<li>{{ v.message }}</li>{% endfor %}
+          </ul>
+          {% endif %}
+          {% if decision.suggestions %}
+          <p style="margin:10px 0 0;"><strong>Next available:</strong></p>
+          <ul>
+            {% for s in decision.suggestions %}
+            <li>{{ s.start.strftime("%a %d %b %Y %H:%M") }} – {{ s.end.strftime("%H:%M") }} ({{ s.timezone }})</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endif %}
 
-      <div class="field">
-        <label for="notes">Notes <span style="color:var(--dim)">optional</span></label>
-        <textarea id="notes" name="notes" maxlength="5000"
-                  placeholder="Anything the operator should know before the booking">{{ form.notes if form else '' }}</textarea>
-      </div>
+        <form method="post" action="/book">
+          <div class="picked">
+            <div><span class="when" data-picked-label>—</span><span class="tz">{{ timezone }}</span></div>
+            <button type="button" data-change-slot>Change</button>
+          </div>
 
-      <button type="submit" name="_submit" value="book">Request this slot</button>
-    </form>
+          <div class="row fallback-datetime">
+            <div class="field">
+              <label for="date">Date <span class="req">*</span></label>
+              <input type="date" id="date" name="date" required
+                     value="{{ form.date if form else '' }}">
+            </div>
+            <div class="field">
+              <label for="time">Time <span class="req">*</span></label>
+              <input type="time" id="time" name="time" step="900" required
+                     value="{{ form.time if form else '' }}">
+              <div class="hint">Booking window: {{ window_start }} – {{ window_end }} {{ timezone }} · {{ duration_label }} min</div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="name">Your name <span class="req">*</span></label>
+              <input type="text" id="name" name="name" maxlength="200" required
+                     value="{{ form.name if form else '' }}" autocomplete="name">
+            </div>
+            <div class="field">
+              <label for="email">Email <span class="req">*</span></label>
+              <input type="email" id="email" name="email" maxlength="320" required
+                     value="{{ form.email if form else '' }}" autocomplete="email">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="phone">Phone <span class="opt">· optional</span></label>
+            <input type="tel" id="phone" name="phone" maxlength="64"
+                   value="{{ form.phone if form else '' }}" autocomplete="tel">
+          </div>
+
+          <div class="field">
+            <label for="subject">Subject <span class="req">*</span></label>
+            <input type="text" id="subject" name="subject" maxlength="300" required
+                   value="{{ form.subject if form else '' }}">
+          </div>
+
+          <div class="field">
+            <label for="notes">Notes <span class="opt">· optional</span></label>
+            <textarea id="notes" name="notes" maxlength="5000"
+                      placeholder="Anything the operator should know before the booking">{{ form.notes if form else '' }}</textarea>
+          </div>
+
+          <button type="submit" name="_submit" value="book">Request this slot</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="footmark">calon</div>
     {% endif %}
 
   </main>
+
+  <script>
+  (function () {
+    "use strict";
+    var widget = document.getElementById("widget");
+    if (!widget) return;  // the confirmation page has no widget
+
+    var RESOURCE = widget.dataset.resource;
+    var TZ = widget.dataset.timezone;
+    var DURATION = parseInt(widget.dataset.duration, 10) || 30;
+    var TODAY = widget.dataset.today;                       // "YYYY-MM-DD" in TZ
+    var HORIZON = parseInt(widget.dataset.horizon, 10) || 60;
+    var MAX_RANGE_DAYS = 31;                                // the availability endpoint's cap
+
+    var dateInput = document.getElementById("date");
+    var timeInput = document.getElementById("time");
+    var monthLabel = widget.querySelector("[data-month-label]");
+    var daysBox = widget.querySelector("[data-days]");
+    var calNote = widget.querySelector("[data-cal-note]");
+    var slotsDay = widget.querySelector("[data-slots-day]");
+    var slotList = widget.querySelector("[data-slot-list]");
+    var pickedLabel = widget.querySelector("[data-picked-label]");
+
+    var MONTHS = ["January","February","March","April","May","June",
+                  "July","August","September","October","November","December"];
+    var DAYS_SHORT = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+    // The date/time the server reads are hidden inputs once the picker drives them.
+    // A hidden input is exempt from constraint validation, so `required` on a field the
+    // user can no longer see cannot block submission.
+    dateInput.type = "hidden";
+    timeInput.type = "hidden";
+
+    var slotsByDay = {};          // "YYYY-MM-DD" -> ["HH:MM", ...]
+    var viewYear, viewMonth;      // the month on screen (month is 0-based)
+    var selectedDay = null;       // "YYYY-MM-DD"
+    var hourFormat = 24;
+    var loadToken = 0;
+
+    // --- date helpers, all on plain "YYYY-MM-DD" strings in the resource timezone ---
+    function iso(y, m, d) {
+      return y + "-" + String(m + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+    }
+    function partsOf(key) {
+      return { y: +key.slice(0, 4), m: +key.slice(5, 7) - 1, d: +key.slice(8, 10) };
+    }
+    /* Monday-first weekday index of a calendar date, with no timezone involved. */
+    function weekdayIndex(y, m, d) {
+      return (new Date(Date.UTC(y, m, d)).getUTCDay() + 6) % 7;
+    }
+
+    /* The UTC instant of a wall-clock time in `tz`. Two passes, because the offset
+       depends on the instant we are trying to compute (DST). */
+    function offsetMs(instant, tz) {
+      var fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz, hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit"
+      });
+      var p = {};
+      fmt.formatToParts(instant).forEach(function (part) { p[part.type] = part.value; });
+      var asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
+      return asUTC - instant.getTime();
+    }
+    function zonedToUtc(y, m, d, h, mi, tz) {
+      var naive = Date.UTC(y, m, d, h, mi);
+      var guess = new Date(naive - offsetMs(new Date(naive), tz));
+      return new Date(naive - offsetMs(guess, tz));
+    }
+
+    function fmtTime(hhmm) {
+      if (hourFormat === 24) return hhmm;
+      var h = +hhmm.slice(0, 2), m = hhmm.slice(3, 5);
+      var suffix = h < 12 ? "am" : "pm";
+      var h12 = h % 12 === 0 ? 12 : h % 12;
+      return h12 + ":" + m + suffix;
+    }
+    function fmtDayLabel(key) {
+      var p = partsOf(key);
+      return DAYS_SHORT[weekdayIndex(p.y, p.m, p.d)] + " " + p.d + " " + MONTHS[p.m].slice(0, 3);
+    }
+
+    // --- availability ------------------------------------------------------
+    function loadMonth() {
+      var token = ++loadToken;
+      var monthStart = zonedToUtc(viewYear, viewMonth, 1, 0, 0, TZ);
+      var monthEnd = zonedToUtc(viewYear, viewMonth + 1, 1, 0, 0, TZ);
+      var from = new Date(Math.max(monthStart.getTime(), Date.now() + 60000));
+      var capped = from.getTime() + MAX_RANGE_DAYS * 86400000;
+      var to = new Date(Math.min(monthEnd.getTime(), capped));
+
+      slotsByDay = {};
+      calNote.textContent = to <= from ? "" : "Loading availability…";
+      renderDays();
+      renderSlots();
+      if (to <= from) return;
+
+      var query = "?resource_slug=" + encodeURIComponent(RESOURCE) +
+                  "&from=" + encodeURIComponent(from.toISOString()) +
+                  "&to=" + encodeURIComponent(to.toISOString()) +
+                  "&timezone=" + encodeURIComponent(TZ) +
+                  "&duration_min=" + DURATION;
+
+      fetch("/api/v1/availability" + query, { headers: { "Accept": "application/json" } })
+        .then(function (res) {
+          if (!res.ok) throw new Error("availability request failed");
+          return res.json();
+        })
+        .then(function (body) {
+          if (token !== loadToken) return;   // a later month is already on screen
+          (body.slots || []).forEach(function (slot) {
+            // Slots come back in the timezone we asked for, so the local day and the
+            // local time are simply the first 10 and next 5 characters.
+            var key = slot.start.slice(0, 10);
+            (slotsByDay[key] = slotsByDay[key] || []).push(slot.start.slice(11, 16));
+          });
+          calNote.textContent = "";
+          autoSelectDay();
+          renderDays();
+          renderSlots();
+        })
+        .catch(function () {
+          if (token !== loadToken) return;
+          calNote.textContent = "Could not load availability — pick a date and time below.";
+          widget.dataset.step = "details";   // fall back to the plain form
+          showFallbackFields();
+        });
+    }
+
+    /* If availability cannot be read, the plain date/time inputs come back so the
+       booking flow still works — the server decides either way. */
+    function showFallbackFields() {
+      dateInput.type = "date";
+      timeInput.type = "time";
+      var row = widget.querySelector(".fallback-datetime");
+      if (row) row.style.display = "flex";
+      var picked = widget.querySelector(".picked");
+      if (picked) picked.style.display = "none";
+    }
+
+    function autoSelectDay() {
+      if (selectedDay && slotsByDay[selectedDay]) return;
+      var keys = Object.keys(slotsByDay).sort();
+      selectedDay = keys.length ? keys[0] : null;
+    }
+
+    // --- rendering ---------------------------------------------------------
+    function renderDays() {
+      monthLabel.innerHTML = MONTHS[viewMonth] + ' <span class="year">' + viewYear + "</span>";
+      daysBox.innerHTML = "";
+
+      var lead = weekdayIndex(viewYear, viewMonth, 1);
+      var length = new Date(Date.UTC(viewYear, viewMonth + 1, 0)).getUTCDate();
+      for (var i = 0; i < lead; i++) {
+        daysBox.appendChild(document.createElement("span"));
+      }
+      for (var d = 1; d <= length; d++) {
+        var key = iso(viewYear, viewMonth, d);
+        var cell = document.createElement("button");
+        cell.type = "button";
+        cell.className = "day";
+        cell.textContent = d;
+        if (key === TODAY) cell.classList.add("today");
+        if (slotsByDay[key]) {
+          cell.classList.add("free");
+          cell.dataset.day = key;
+          cell.setAttribute("aria-label", fmtDayLabel(key) + ", " + slotsByDay[key].length + " slots");
+        } else {
+          cell.disabled = true;
+        }
+        if (key === selectedDay) cell.classList.add("selected");
+        daysBox.appendChild(cell);
+      }
+
+      var prev = widget.querySelector("[data-prev-month]");
+      var todayParts = partsOf(TODAY);
+      prev.disabled = viewYear === todayParts.y && viewMonth === todayParts.m;
+
+      if (!calNote.textContent && !Object.keys(slotsByDay).length) {
+        calNote.textContent = "Nothing free in " + MONTHS[viewMonth] + " — try the next month.";
+      }
+    }
+
+    function renderSlots() {
+      slotList.innerHTML = "";
+      if (!selectedDay) {
+        slotsDay.innerHTML = '<span class="dim">No day selected</span>';
+        var none = document.createElement("div");
+        none.className = "slot-empty";
+        none.textContent = "Pick a day with free time on it.";
+        slotList.appendChild(none);
+        return;
+      }
+      slotsDay.textContent = fmtDayLabel(selectedDay);
+      var times = (slotsByDay[selectedDay] || []).slice().sort();
+      times.forEach(function (hhmm) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "slot";
+        button.textContent = fmtTime(hhmm);
+        button.dataset.time = hhmm;
+        slotList.appendChild(button);
+      });
+    }
+
+    function renderPicked() {
+      if (!dateInput.value || !timeInput.value) return;
+      pickedLabel.textContent = fmtDayLabel(dateInput.value) + " " +
+        partsOf(dateInput.value).y + ", " + fmtTime(timeInput.value);
+    }
+
+    // --- events ------------------------------------------------------------
+    daysBox.addEventListener("click", function (event) {
+      var cell = event.target.closest("[data-day]");
+      if (!cell) return;
+      selectedDay = cell.dataset.day;
+      renderDays();
+      renderSlots();
+    });
+
+    slotList.addEventListener("click", function (event) {
+      var button = event.target.closest("[data-time]");
+      if (!button) return;
+      dateInput.value = selectedDay;
+      timeInput.value = button.dataset.time;
+      renderPicked();
+      widget.dataset.step = "details";
+      var name = document.getElementById("name");
+      if (name) name.focus();
+    });
+
+    widget.querySelector("[data-change-slot]").addEventListener("click", function () {
+      widget.dataset.step = "pick";
+    });
+
+    widget.querySelectorAll("[data-hour]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        hourFormat = parseInt(button.dataset.hour, 10);
+        widget.querySelectorAll("[data-hour]").forEach(function (other) {
+          other.setAttribute("aria-pressed", other === button ? "true" : "false");
+        });
+        renderSlots();
+        renderPicked();
+      });
+    });
+
+    widget.querySelector("[data-prev-month]").addEventListener("click", function () {
+      viewMonth--;
+      if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+      loadMonth();
+    });
+    widget.querySelector("[data-next-month]").addEventListener("click", function () {
+      viewMonth++;
+      if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+      loadMonth();
+    });
+
+    // --- start -------------------------------------------------------------
+    var preset = /^\d{4}-\d{2}-\d{2}$/.test(dateInput.value) ? dateInput.value : null;
+    var start = partsOf(preset || TODAY);
+    viewYear = start.y;
+    viewMonth = start.m;
+    selectedDay = preset;
+    renderPicked();
+    loadMonth();
+  })();
+  </script>
 </body>
 </html>

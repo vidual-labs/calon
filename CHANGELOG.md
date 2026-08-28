@@ -12,6 +12,16 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- **The booking page now shows what is actually free.** `/book` opens on a month
+  calendar with the bookable days lit up, the times for the day you pick beside it (12h or
+  24h, your choice), and the details form after that — instead of a blank date and time
+  box you had to guess at. Days and times come from the same rules that judge the booking,
+  so a closed day, a slot outside your window, one inside the notice period, or one
+  already taken simply is not offered. Nothing else about booking changed: the times shown
+  are still advisory (two people can click the same one and the second is still rejected,
+  with the reasons and alternatives as before), and the page still works with JavaScript
+  turned off — it falls back to the plain date and time fields, as does a page that cannot
+  reach the availability endpoint.
 - **Subscribe to a calendar feed — no developer console needed.** If you cannot (or would
   rather not) register an OAuth app, publish your calendar from its own settings — Google
   Calendar and Outlook both offer a secret iCal address — and paste that address into the

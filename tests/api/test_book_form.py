@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from calon.db import Database
-from tests.conftest import booking_payload
+from tests.conftest import BootFn, booking_payload
 
 
 def _valid_fields() -> dict[str, str]:
@@ -208,3 +208,54 @@ def test_form_booking_and_api_booking_are_equivalent(
     with database.read() as session:
         assert session.query(Booking).count() == 2
         assert session.query(BookingIntent).count() == 2
+
+
+# ---------------------------------------------------------------------------
+# The day-and-time picker (ADR 0018)
+# ---------------------------------------------------------------------------
+
+
+def test_get_book_carries_what_the_picker_needs(client: TestClient) -> None:
+    """The widget reads its query parameters off the element, not from hard-coded values."""
+    body = client.get("/book").text
+    assert 'data-resource="default"' in body
+    assert 'data-timezone="Europe/Berlin"' in body
+    assert 'data-duration="30"' in body
+    # Frozen at 2026-09-01 06:00 UTC, which is 08:00 in Europe/Berlin.
+    assert 'data-today="2026-09-01"' in body
+    assert 'data-step="pick"' in body
+
+
+def test_today_is_the_date_in_the_resource_timezone_not_utc(boot: BootFn) -> None:
+    """The month grid opens on the resource's today, wherever the requester is."""
+    config_body = """
+    [resource]
+    slug = "default"
+    name = "Consultation"
+    timezone = "Pacific/Honolulu"
+    """
+    with boot(config_body) as client:
+        # 2026-09-01 06:00 UTC is still 2026-08-31 in Honolulu (UTC-10).
+        assert 'data-today="2026-08-31"' in client.get("/book").text
+
+
+def test_the_plain_date_and_time_inputs_survive_for_a_browser_without_scripting(
+    client: TestClient,
+) -> None:
+    """The picker is enhancement only: with no JavaScript the original form is the page."""
+    body = client.get("/book").text
+    assert '<input type="date" id="date" name="date" required' in body
+    assert '<input type="time" id="time" name="time" step="900" required' in body
+    # And the POST target is unchanged.
+    assert 'action="/book"' in body
+
+
+def test_a_rejected_request_comes_back_on_the_details_step(client: TestClient) -> None:
+    """A server-side rejection must show the form and its banner, not the empty calendar."""
+    body = client.post("/book", data=_sunday_fields()).text
+    assert 'data-step="details"' in body
+
+
+def test_a_validation_error_comes_back_on_the_details_step(client: TestClient) -> None:
+    body = client.post("/book", data={"phone": "+49 123"}).text
+    assert 'data-step="details"' in body

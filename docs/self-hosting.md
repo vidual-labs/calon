@@ -127,7 +127,10 @@ sessions (in-memory, by design) — no session store on disk, nothing to leak.
 The **public booking intake** (`POST /api/v1/bookings` for a booking by a requester) and
 **availability** (`GET /api/v1/availability`) remain unauthenticated by design — anyone
 should be able to book or check free times. Only the *operator* surface and the
-*personal-data* endpoints require the login.
+*personal-data* endpoints require the login. The booking page at `/book` reads
+`GET /api/v1/availability` to fill its calendar, so a reverse proxy that blocks that path
+for the public leaves the page working but without the day-and-time picker: it falls back
+to plain date and time fields, and booking still works (ADR 0018).
 
 If `CALON_LOGIN` is left empty, the operator panel and the `.ics` endpoint return `503`
 ("login not configured") — the instance *fails closed* rather than opening the panel to

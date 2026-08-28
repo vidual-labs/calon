@@ -172,7 +172,7 @@ a booking is actually submitted.
 
 The public booking form at `/book`:
 
-![The calon booking form, showing name, email, phone, date, time, subject, and notes fields](docs/screenshots/book.png)
+![The calon booking page: the resource and its duration, timezone and daily window on the left, a month calendar with the bookable days highlighted in the middle, and the free times for the selected day on the right](docs/screenshots/book.png)
 
 The login-gated operator dashboard at `/bookings` — an overview of the functions this
 instance exposes and the rules in force, the calendars panel, and every booking:
@@ -190,7 +190,7 @@ The operator login at `/login`:
 | Language | Python 3.13 (requires ≥3.12) |
 | Web framework | FastAPI (OpenAPI schema generated, not hand-written) |
 | Storage | SQLite in WAL mode, via SQLAlchemy 2.0 + Alembic |
-| Templates | Jinja2, server-rendered, no JavaScript and no build step |
+| Templates | Jinja2, server-rendered; one vanilla-JS enhancement on `/book`, no build step |
 | Calendar | `icalendar` for RFC 5545 output; hand-rolled provider deeplinks |
 | Timezones | stdlib `zoneinfo` + the `tzdata` package |
 | Tests | pytest + httpx `ASGITransport` + `time-machine` |
