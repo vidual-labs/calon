@@ -78,6 +78,11 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Changed
 
+- **BREAKING:** the operator dashboard moved from `/bookings` to `/admin`. The page and
+  its login are unchanged — only the address is. Update your bookmark, and any reverse
+  proxy rule or allow-list that named `/bookings`; the old address is gone, not
+  redirected. The public booking API `POST /api/v1/bookings` and the `.ics` endpoint
+  under it are untouched, as is the booking page at `/book`.
 - **BREAKING:** an enabled `[calendars.<resource_slug>]` entry now requires both
   `client_id` and `client_secret`; calon refuses to start without them rather
   than booting into a calendar sync that can never work. If you already have a

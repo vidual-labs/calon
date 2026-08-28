@@ -233,7 +233,7 @@ def _log_in(client: TestClient, login: str) -> None:
 
 def test_operator_surface_fails_closed_without_a_login(anonymous_client: TestClient) -> None:
     """No CALON_LOGIN means the operator endpoints refuse with 503 — not open."""
-    assert anonymous_client.get("/bookings").status_code == 503
+    assert anonymous_client.get("/admin").status_code == 503
     # The public booking flow must still work in exactly this configuration.
     assert (
         anonymous_client.post(
@@ -291,7 +291,7 @@ def test_the_bookings_panel_renders_the_personal_data_after_login(
     body = _make_a_booking(operator_client)
     _log_in(operator_client, "op-key-123")
 
-    response = operator_client.get("/bookings")
+    response = operator_client.get("/admin")
     assert response.status_code == 200
     html = response.text
     # The requester's name and subject are on the dashboard — that is precisely the
@@ -302,12 +302,33 @@ def test_the_bookings_panel_renders_the_personal_data_after_login(
     assert f"/api/v1/bookings/{body['booking']['id']}/calendar.ics" in html
 
 
+def test_the_dashboard_is_at_admin_and_nowhere_else(operator_client: TestClient) -> None:
+    """The operator panel's address is ``/admin``; the old ``/bookings`` is gone."""
+    _log_in(operator_client, "op-key-123")
+
+    assert operator_client.get("/admin").status_code == 200
+    assert operator_client.get("/bookings").status_code == 404
+    # The public booking API keeps its path — only the panel moved.
+    assert (
+        operator_client.post(
+            "/api/v1/bookings", json=booking_payload("2026-09-02T11:00:00+02:00")
+        ).status_code
+        == 201
+    )
+
+
+def test_login_lands_on_the_dashboard(operator_client: TestClient) -> None:
+    """A successful login redirects to the panel's own address."""
+    response = operator_client.post("/login", json={"login": "op-key-123"}, follow_redirects=False)
+    assert response.headers["location"] == "/admin"
+
+
 def test_logout_ends_the_session(operator_client: TestClient) -> None:
     _log_in(operator_client, "op-key-123")
-    assert operator_client.get("/bookings").status_code == 200
+    assert operator_client.get("/admin").status_code == 200
 
     operator_client.post("/logout")
-    assert operator_client.get("/bookings").status_code == 401
+    assert operator_client.get("/admin").status_code == 401
 
 
 def test_logout_clears_the_session_cookie(operator_client: TestClient) -> None:
@@ -340,6 +361,6 @@ def test_the_dashboard_renders_well_formed_iso_8601_timestamps(
         intent = session.query(BookingIntent).one()
         received_at = intent.received_at_utc.isoformat()
 
-    html = operator_client.get("/bookings").text
+    html = operator_client.get("/admin").text
     assert received_at in html
     assert f"{received_at}Z" not in html

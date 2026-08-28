@@ -10,7 +10,7 @@ Routes:
 * ``GET  /login``     — the login form (the only other unauthenticated page).
 * ``POST /login``     — verifies the entered login and sets a session cookie.
 * ``POST /logout``    — ends the session and redirects to the login form.
-* ``GET  /bookings``  — the operator dashboard.
+* ``GET  /admin``     — the operator dashboard.
 * ``POST /calendars/{resource_slug}/oauth-client``        — store the OAuth app credentials
   an operator entered in the dashboard (ADR 0016).
 * ``POST /calendars/{resource_slug}/oauth-client/forget``  — drop them again.
@@ -306,7 +306,7 @@ def login_form(request: Request) -> Response:
     """The login form. If the user is already logged in, redirect to the dashboard."""
     store = request.app.state.login_store
     if store is not None and store.valid_session(request.cookies.get(SESSION_COOKIE)):
-        return RedirectResponse("/bookings", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse("/admin", status_code=status.HTTP_303_SEE_OTHER)
     return templates.TemplateResponse(
         request=request,
         name="login.html",
@@ -334,7 +334,7 @@ async def login_submit(request: Request, settings: SettingsDep) -> Response:
         # Build the redirect, then attach the session cookie to *that* response. Injecting
         # a separate ``response`` here would be a different object from the one FastAPI
         # actually sends, so the cookie would be silently dropped.
-        response = RedirectResponse("/bookings", status_code=status.HTTP_303_SEE_OTHER)
+        response = RedirectResponse("/admin", status_code=status.HTTP_303_SEE_OTHER)
         response.set_cookie(
             SESSION_COOKIE,
             token,
@@ -373,7 +373,7 @@ def logout(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/bookings", name="dashboard", response_class=HTMLResponse)
+@router.get("/admin", name="dashboard", response_class=HTMLResponse)
 def dashboard(
     request: Request,
     database: DatabaseDep,
@@ -401,7 +401,7 @@ def dashboard(
 
     return templates.TemplateResponse(
         request=request,
-        name="bookings.html",
+        name="admin.html",
         context={
             "intents": intents,
             "instance_url": settings.base_url,
@@ -446,7 +446,7 @@ def calendar_connect(
             )
     except calendar_connect_service.CalendarNotConfiguredError as exc:
         return RedirectResponse(
-            f"/bookings?calendar_error={quote_plus(str(exc))}",
+            f"/admin?calendar_error={quote_plus(str(exc))}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     return RedirectResponse(url, status_code=status.HTTP_302_FOUND)
@@ -471,19 +471,19 @@ def calendar_connect_callback(
     """
     if error:
         return RedirectResponse(
-            f"/bookings?calendar_error={quote_plus(error)}",
+            f"/admin?calendar_error={quote_plus(error)}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
     if not code or not state:
         return RedirectResponse(
-            "/bookings?calendar_error=the+connect+request+was+missing+code+or+state",
+            "/admin?calendar_error=the+connect+request+was+missing+code+or+state",
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
     resource_slug = verify_oauth_state(derive_login_key(settings.login), state)
     if resource_slug is None:
         return RedirectResponse(
-            "/bookings?calendar_error=the+connect+link+expired%3B+please+try+again",
+            "/admin?calendar_error=the+connect+link+expired%3B+please+try+again",
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -501,12 +501,12 @@ def calendar_connect_callback(
             )
     except (calendar_connect_service.CalendarNotConfiguredError, CalendarProviderError) as exc:
         return RedirectResponse(
-            f"/bookings?calendar_error={quote_plus(str(exc))}",
+            f"/admin?calendar_error={quote_plus(str(exc))}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
     return RedirectResponse(
-        f"/bookings?calendar_connected={quote_plus(resource_slug)}",
+        f"/admin?calendar_connected={quote_plus(resource_slug)}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -521,7 +521,7 @@ def calendar_disconnect(
     """Remove a resource's stored credential and degrade it to calon-only (ADR 0014)."""
     with database.write() as session:
         calendar_connect_service.disconnect(session, calendar_registry, resource_slug=resource_slug)
-    return RedirectResponse("/bookings", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse("/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/calendars/{resource_slug}/oauth-client", name="calendar_oauth_client_save")
@@ -567,7 +567,7 @@ async def calendar_oauth_client_save(
         return _dashboard_error(str(exc))
 
     return RedirectResponse(
-        f"/bookings?calendar_saved={quote_plus(resource_slug)}#calendars",
+        f"/admin?calendar_saved={quote_plus(resource_slug)}#calendars",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -584,7 +584,7 @@ def calendar_oauth_client_forget(
         calendar_connect_service.forget_oauth_client(
             session, calendar_registry, resource_slug=resource_slug
         )
-    return RedirectResponse("/bookings#calendars", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse("/admin#calendars", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/calendars/{resource_slug}/feed", name="calendar_feed_save")
@@ -626,7 +626,7 @@ async def calendar_feed_save(
         return _dashboard_error(str(exc))
 
     return RedirectResponse(
-        f"/bookings?calendar_subscribed={quote_plus(resource_slug)}#calendars",
+        f"/admin?calendar_subscribed={quote_plus(resource_slug)}#calendars",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -643,7 +643,7 @@ def calendar_feed_forget(
         calendar_connect_service.forget_feed(
             session, calendar_registry, resource_slug=resource_slug
         )
-    return RedirectResponse("/bookings#calendars", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse("/admin#calendars", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # ---------------------------------------------------------------------------
@@ -731,7 +731,7 @@ def _overview(
 def _dashboard_error(message: str) -> RedirectResponse:
     """Back to the dashboard with the message in the error banner."""
     return RedirectResponse(
-        f"/bookings?calendar_error={quote_plus(message)}#calendars",
+        f"/admin?calendar_error={quote_plus(message)}#calendars",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 

@@ -217,7 +217,7 @@ organizer_email = ""
 #                here always wins over what was entered there.
 # refresh_token  the OAuth refresh token for this account. For Google, you can
 #                leave this blank and instead click "Connect with Google" on
-#                the operator dashboard (/bookings) after setting client_id/
+#                the operator dashboard (/admin) after setting client_id/
 #                client_secret and restarting — calon runs the OAuth exchange
 #                itself and stores the token in calon.db (ADR 0014). For
 #                Microsoft 365, or a scripted/headless Google install, paste

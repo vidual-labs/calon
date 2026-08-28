@@ -101,7 +101,7 @@ class TestCalendarConnectRoute:
     ) -> None:
         response = operator_client.get("/calendars/does-not-exist/connect", follow_redirects=False)
         assert response.status_code == 303
-        assert response.headers["location"].startswith("/bookings?calendar_error=")
+        assert response.headers["location"].startswith("/admin?calendar_error=")
 
     def test_requires_the_operator_login(self, tmp_path: Path) -> None:
         settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
@@ -130,9 +130,9 @@ class TestCalendarConnectCallback:
             follow_redirects=False,
         )
         assert response.status_code == 303
-        assert response.headers["location"] == "/bookings?calendar_connected=default"
+        assert response.headers["location"] == "/admin?calendar_connected=default"
 
-        dashboard = operator_client.get("/bookings")
+        dashboard = operator_client.get("/admin")
         assert "Connected" in dashboard.text
         assert "connected-token" not in dashboard.text  # the token itself is never rendered
 
@@ -167,7 +167,7 @@ class TestCalendarConnectCallback:
         assert "calendar_error=" in response.headers["location"]
         # No credential is persisted — the dashboard still shows "Not connected", not the
         # boot-built (seed-refresh-token-less) provider the config alone already installs.
-        assert "Not connected" in operator_client.get("/bookings").text
+        assert "Not connected" in operator_client.get("/admin").text
 
     def test_callback_requires_the_operator_login(self, tmp_path: Path) -> None:
         settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
@@ -205,7 +205,7 @@ class TestCalendarDisconnect:
         assert response.status_code == 303
         assert registry.provider_for("default") is None
 
-        dashboard = operator_client.get("/bookings")
+        dashboard = operator_client.get("/admin")
         assert "Not connected" in dashboard.text
 
     def test_disconnect_requires_the_operator_login(self, tmp_path: Path) -> None:
@@ -237,7 +237,7 @@ class TestDashboardCalendarsPanel:
             TestClient(create_app(settings)) as client,
         ):
             _log_in(client)
-            html = client.get("/bookings").text
+            html = client.get("/admin").text
             assert "Calendars" in html
             assert "Not configured" in html
             assert "/calendars/default/connect" not in html  # no action, only a signpost
@@ -247,7 +247,7 @@ class TestDashboardCalendarsPanel:
     def test_a_configured_but_unconnected_resource_shows_a_connect_button(
         self, operator_client: TestClient
     ) -> None:
-        html = operator_client.get("/bookings").text
+        html = operator_client.get("/admin").text
         assert "Calendars" in html
         assert "Connect with Google" in html
         assert "Not connected" in html
@@ -264,7 +264,7 @@ class TestDashboardOverviewPanel:
             TestClient(create_app(settings)) as client,
         ):
             _log_in(client)
-            html = client.get("/bookings").text
+            html = client.get("/admin").text
             assert "Overview" in html
             assert "POST /api/v1/bookings" in html
             assert "GET /api/v1/availability" in html
@@ -292,7 +292,7 @@ class TestDashboardOverviewPanel:
             TestClient(create_app(settings, config)) as client,
         ):
             _log_in(client)
-            html = client.get("/bookings").text
+            html = client.get("/admin").text
             assert "POST /api/v1/openflow" in html
 
 
@@ -333,9 +333,9 @@ class TestDashboardOAuthClient:
     ) -> None:
         response = self._save(standalone)
         assert response.status_code == 303
-        assert response.headers["location"].startswith("/bookings?calendar_saved=default")
+        assert response.headers["location"].startswith("/admin?calendar_saved=default")
 
-        html = standalone.get("/bookings").text
+        html = standalone.get("/admin").text
         assert "Connect with Google" in html
         assert "Not configured" not in html
 
@@ -348,13 +348,13 @@ class TestDashboardOAuthClient:
 
     def test_the_client_secret_is_never_rendered_back(self, standalone: TestClient) -> None:
         self._save(standalone)
-        assert "browser-secret" not in standalone.get("/bookings").text
+        assert "browser-secret" not in standalone.get("/admin").text
 
     def test_empty_credentials_are_refused(self, standalone: TestClient) -> None:
         response = self._save(standalone, client_id="", client_secret="")
         assert response.status_code == 303
         assert "calendar_error=" in response.headers["location"]
-        assert "Not configured" in standalone.get("/bookings").text
+        assert "Not configured" in standalone.get("/admin").text
 
     def test_a_toml_configured_resource_refuses_the_form(self, operator_client: TestClient) -> None:
         """The file wins at resolution time, so storing a row that never applies is worse."""
@@ -382,13 +382,13 @@ class TestDashboardOAuthClient:
             follow_redirects=False,
         )
         assert response.status_code == 303
-        assert response.headers["location"] == "/bookings?calendar_connected=default"
+        assert response.headers["location"] == "/admin?calendar_connected=default"
 
         registry = standalone.app.state.calendar_registry  # type: ignore[attr-defined]
         provider = registry.provider_for("default")
         assert provider is not None
         assert provider.calendar_id == "you@example.com"
-        assert "Connected" in standalone.get("/bookings").text
+        assert "Connected" in standalone.get("/admin").text
 
     def test_forget_removes_the_credentials_and_the_connection(
         self, standalone: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -410,7 +410,7 @@ class TestDashboardOAuthClient:
         response = standalone.post("/calendars/default/oauth-client/forget", follow_redirects=False)
         assert response.status_code == 303
         assert registry.provider_for("default") is None
-        assert "Not configured" in standalone.get("/bookings").text
+        assert "Not configured" in standalone.get("/admin").text
 
     def test_the_connection_survives_a_restart(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -518,19 +518,19 @@ class TestDashboardCalendarFeed:
         """No consent round trip: for a feed, the URL is the credential."""
         response = self._subscribe(standalone)
         assert response.status_code == 303
-        assert response.headers["location"].startswith("/bookings?calendar_subscribed=default")
+        assert response.headers["location"].startswith("/admin?calendar_subscribed=default")
 
         registry = standalone.app.state.calendar_registry  # type: ignore[attr-defined]
         assert registry.provider_for("default") is not None
 
-        html = standalone.get("/bookings").text
+        html = standalone.get("/admin").text
         assert "Subscribed" in html
         assert "free/busy only" in html
         assert "Not configured" not in html
 
     def test_the_feed_url_is_never_rendered_back(self, standalone: TestClient) -> None:
         self._subscribe(standalone)
-        assert "secret" not in standalone.get("/bookings").text
+        assert "secret" not in standalone.get("/admin").text
 
     def test_busy_time_from_the_feed_blocks_a_booking(
         self, standalone: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -588,13 +588,13 @@ class TestDashboardCalendarFeed:
 
         registry = standalone.app.state.calendar_registry  # type: ignore[attr-defined]
         assert registry.provider_for("default") is None
-        assert "Not configured" in standalone.get("/bookings").text
+        assert "Not configured" in standalone.get("/admin").text
 
     def test_a_url_that_is_not_http_is_refused(self, standalone: TestClient) -> None:
         response = self._subscribe(standalone, url="file:///etc/passwd")
         assert response.status_code == 303
         assert "calendar_error=" in response.headers["location"]
-        assert "Not configured" in standalone.get("/bookings").text
+        assert "Not configured" in standalone.get("/admin").text
 
     def test_a_feed_and_an_oauth_client_are_mutually_exclusive(
         self, standalone: TestClient
@@ -614,7 +614,7 @@ class TestDashboardCalendarFeed:
             data={"client_id": "cid", "client_secret": "sec", "calendar_id": ""},
             follow_redirects=False,
         )
-        assert saved_again.headers["location"].startswith("/bookings?calendar_saved=")
+        assert saved_again.headers["location"].startswith("/admin?calendar_saved=")
         # …and now the feed form is the one refused.
         assert "calendar_error=" in self._subscribe(standalone).headers["location"]
 
