@@ -54,7 +54,7 @@ Two files, with a deliberate split:
 
 Neither is tracked in git. `config/calon.toml` may contain per-source shared secrets.
 
-There is an operator web panel (`/login` and `/bookings`), gated by the `CALON_LOGIN`
+There is an operator web panel (`/login` and `/admin`), gated by the `CALON_LOGIN`
 key. It is deliberately a **single shared login, not per-user accounts** — calon models
 one operator per instance, and the panel exists so the operator can see the bookings and
 download the calendar handoffs. It is not a public form; the public booking flow still
@@ -113,7 +113,7 @@ replacing the original. Pick a stable hostname before your first real booking.
 
 Set `CALON_LOGIN` in `.env`. It is the single credential that gates the operator surface:
 
-- the web panel — `/login` (the only public page) and `/bookings` (login-gated);
+- the web panel — `/login` (the only public page) and `/admin` (login-gated);
 - the calendar handoff — `GET /api/v1/bookings/{id}/calendar.ics` and the deeplinks
   returned in the accept response. That endpoint returns a requester's name and subject,
   so it must never be public.
@@ -211,7 +211,7 @@ own developer console, and calon cannot do it for you. From there, how the **ref
 token** — the credential that actually authorizes calon to read/write the calendar — gets
 into calon differs by provider:
 
-- **Google:** click **Connect with Google** on the operator dashboard (`/bookings`). calon
+- **Google:** click **Connect with Google** on the operator dashboard (`/admin`). calon
   runs the OAuth exchange itself and stores the result; nothing to copy-paste, no restart.
 - **Microsoft 365, or a scripted/headless Google install:** obtain the refresh token
   **out-of-band** — run the provider's OAuth flow once yourself, outside calon — and paste
@@ -247,7 +247,7 @@ refresh_token = "..."          # only if not using the dashboard's Connect butto
    URI** — this must match `CALON_BASE_URL` exactly, protocol included. The Calendars panel
    on the dashboard prints the exact URI your instance will use; copy it from there rather
    than typing it, since a mismatch is the most common cause of a failed connect.
-3. Log in to the operator dashboard (`/bookings`), and in the **Calendars** panel paste the
+3. Log in to the operator dashboard (`/admin`), and in the **Calendars** panel paste the
    client id and client secret, plus the `calendar_id` (the account's email for its primary
    calendar; leave blank for `primary`). Save.
 4. Click **Connect with Google**. Approve the consent screen — Google requests the
