@@ -346,6 +346,11 @@ client_secret = "..."</pre>
               {% endif %}
             </td>
             <td>
+              {% if item.calendar_sync == "synced" %}
+                <span class="status confirmed">Synced</span><br>
+              {% elif item.calendar_sync == "failed" %}
+                <span class="status rejected">Sync failed</span><br>
+              {% endif %}
               {% if item.ics_url %}
                 <a class="ics" href="{{ item.ics_url }}" target="_blank">Download .ics</a>
               {% else %}

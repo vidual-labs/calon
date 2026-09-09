@@ -36,6 +36,7 @@ from sqlalchemy import select
 from calon.calendars import CalendarProviderRegistry, FakeCalendar
 from calon.db import Database
 from calon.models import AuditEvent, Booking
+from calon.web import _load_intents
 from tests.conftest import booking_payload
 
 __all__: list[str] = []
@@ -183,6 +184,35 @@ def test_a_failing_write_back_degrades_without_rolling_back_the_booking(
     assert provider.events("default") == {}
 
 
+def test_the_dashboard_reports_a_successful_sync(client: TestClient, database: Database) -> None:
+    # Regression: the operator dashboard used to show only the requester's .ics download
+    # link, with no way to tell a real write-back from a silently degraded one — a synced
+    # and a failed booking looked identical. The "Calendar" column now surfaces the
+    # ``booking.calendar_synced`` / ``booking.calendar_sync_failed`` audit outcome.
+    provider = FakeCalendar()
+    _install_provider(client, provider)
+
+    client.post("/api/v1/bookings", json=booking_payload(TOMORROW_10_00, TOMORROW_10_30))
+
+    with database.read() as session:
+        intents = _load_intents(session)
+
+    assert intents[0]["calendar_sync"] == "synced"
+
+
+def test_the_dashboard_reports_a_failed_sync(client: TestClient, database: Database) -> None:
+    provider = FakeCalendar()
+    provider.fail_upsert = True
+    _install_provider(client, provider)
+
+    client.post("/api/v1/bookings", json=booking_payload(TOMORROW_10_00, TOMORROW_10_30))
+
+    with database.read() as session:
+        intents = _load_intents(session)
+
+    assert intents[0]["calendar_sync"] == "failed"
+
+
 def test_a_resource_with_no_provider_is_a_silent_no_op(
     client: TestClient, database: Database
 ) -> None:
@@ -200,6 +230,10 @@ def test_a_resource_with_no_provider_is_a_silent_no_op(
     assert body["decision"]["calendar_synced"] is False
     assert "booking.calendar_synced" not in _audit_types(client, database)
     assert "booking.calendar_sync_failed" not in _audit_types(client, database)
+
+    with database.read() as session:
+        intents = _load_intents(session)
+    assert intents[0]["calendar_sync"] is None
 
 
 # --------------------------------------------------------------------------------

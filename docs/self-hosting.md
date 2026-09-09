@@ -251,8 +251,15 @@ refresh_token = "..."          # only if not using the dashboard's Connect butto
    client id and client secret, plus the `calendar_id` (the account's email for its primary
    calendar; leave blank for `primary`). Save.
 4. Click **Connect with Google**. Approve the consent screen — Google requests the
-   `https://www.googleapis.com/auth/calendar.events` scope — and you are redirected back,
-   connected. Nothing to restart.
+   `https://www.googleapis.com/auth/calendar.events` and
+   `https://www.googleapis.com/auth/calendar.freebusy` scopes — and you are redirected
+   back, connected. Nothing to restart.
+
+   If you connected before upgrading to a version carrying this note, reconnect: an
+   existing refresh token was issued under `calendar.events` alone, which Google accepts
+   for writing events but rejects free/busy lookups under with a 403 — calon degrades that
+   failure to "no busy time" (CLAUDE.md §2), so it can offer slots that are actually busy
+   on the connected calendar until you **Forget credentials** and connect again.
 
 The credentials are stored in `calon.db`, so **that file now holds the client secret as
 well as the refresh token** — give it the same care as any secret, and include it in your
@@ -270,8 +277,9 @@ callback URL for):**
 
 1. Create the OAuth client as a *Desktop app* type instead, and run the one-time
    device/browser flow yourself, requesting the same
-   `https://www.googleapis.com/auth/calendar.events` scope. When it completes you receive
-   an access token **and a refresh token** — use the refresh token.
+   `https://www.googleapis.com/auth/calendar.events` and
+   `https://www.googleapis.com/auth/calendar.freebusy` scopes. When it completes you
+   receive an access token **and a refresh token** — use the refresh token.
 2. Put `client_id`, `client_secret`, and `refresh_token` in the config as before. The
    dashboard's Connect button still works if you switch to it later — a connection made
    through it takes precedence over this file's `refresh_token`.

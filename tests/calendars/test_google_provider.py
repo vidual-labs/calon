@@ -258,7 +258,10 @@ class TestBuildAuthorizeUrl:
         assert params["client_id"] == ["cid-123"]
         assert params["redirect_uri"] == ["https://calon.example.com/calendars/google/callback"]
         assert params["response_type"] == ["code"]
-        assert params["scope"] == ["https://www.googleapis.com/auth/calendar.events"]
+        assert params["scope"] == [
+            "https://www.googleapis.com/auth/calendar.events "
+            "https://www.googleapis.com/auth/calendar.freebusy"
+        ]
         # Both are required to guarantee a refresh token on every connect, not just the
         # first time a given Google account ever authorizes this OAuth client.
         assert params["access_type"] == ["offline"]
