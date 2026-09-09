@@ -104,7 +104,14 @@ per user-visible change, describing the effect rather than the implementation.
 - The operator dashboard's Bookings table showed only the requester's `.ics`
   download link, with no way to tell whether an accepted booking was actually
   written to a connected calendar or the write silently failed. The Calendar
-  column now shows "Synced" or "Sync failed" next to the download link.
+  column now shows "Synced" or "Sync failed" next to the download link, and a
+  failed sync also shows the provider's own error underneath it (e.g. which
+  HTTP call failed and with what status) instead of nothing.
+- Visiting the instance's bare host, or `/admin` with a lapsed or missing
+  login session, showed a raw JSON error instead of anything a person could
+  use — indistinguishable from the instance being broken. The bare host now
+  goes to the dashboard, and `/admin` without a valid session now redirects
+  to the login form.
 - An OpenFlow form's start/end answer with no UTC offset (the common case for a
   form's own date/time fields) was interpreted in the server process's local
   timezone instead of the form's configured one, which could book the wrong hour

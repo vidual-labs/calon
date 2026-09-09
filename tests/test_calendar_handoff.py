@@ -302,6 +302,28 @@ def test_the_bookings_panel_renders_the_personal_data_after_login(
     assert f"/api/v1/bookings/{body['booking']['id']}/calendar.ics" in html
 
 
+def test_an_unauthenticated_visit_to_admin_redirects_to_login(
+    operator_client: TestClient,
+) -> None:
+    """Never having logged in behaves the same as a lapsed session: redirect, not JSON."""
+    response = operator_client.get("/admin", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+
+
+def test_the_bare_host_lands_on_the_dashboard(operator_client: TestClient) -> None:
+    """Regression: nothing served ``/`` at all, so visiting the bare host got FastAPI's
+    default JSON 404 instead of somewhere a person could actually use."""
+    response = operator_client.get("/", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/admin"
+
+    # Logged out, that chain ends on the login form rather than a bare API error.
+    landed = operator_client.get("/", follow_redirects=True)
+    assert landed.status_code == 200
+    assert "login" in landed.text.lower()
+
+
 def test_the_dashboard_is_at_admin_and_nowhere_else(operator_client: TestClient) -> None:
     """The operator panel's address is ``/admin``; the old ``/bookings`` is gone."""
     _log_in(operator_client, "op-key-123")
@@ -328,7 +350,15 @@ def test_logout_ends_the_session(operator_client: TestClient) -> None:
     assert operator_client.get("/admin").status_code == 200
 
     operator_client.post("/logout")
-    assert operator_client.get("/admin").status_code == 401
+    # Regression: a lapsed session on /admin used to answer with a bare JSON 401 (the
+    # same shape the API returns) instead of sending the operator back to the login
+    # form — from a browser, that looked like the instance was broken rather than
+    # simply logged out. It now redirects to /login (which itself renders the login
+    # form with a 200, hence the client following the redirect lands on 200 too).
+    without_redirect = operator_client.get("/admin", follow_redirects=False)
+    assert without_redirect.status_code == 303
+    assert without_redirect.headers["location"] == "/login"
+    assert operator_client.get("/admin").status_code == 200
 
 
 def test_logout_clears_the_session_cookie(operator_client: TestClient) -> None:
