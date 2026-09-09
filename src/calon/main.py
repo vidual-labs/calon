@@ -31,6 +31,7 @@ from calon.models import CalendarCredentialRow
 from calon.security import LoginStore
 from calon.services import calendar_connect_service
 from calon.services.provisioning import sync_operator_config
+from calon.web import install_error_handlers
 from calon.web import router as web_router
 
 __all__ = ["app", "create_app"]
@@ -161,6 +162,7 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
     )
     app.include_router(v1_router)
     app.include_router(web_router)
+    install_error_handlers(app)
 
     @app.get("/healthz", tags=["operations"], summary="Liveness check")
     def healthz() -> dict[str, str]:

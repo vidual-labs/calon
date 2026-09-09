@@ -211,6 +211,10 @@ def test_the_dashboard_reports_a_failed_sync(client: TestClient, database: Datab
         intents = _load_intents(session)
 
     assert intents[0]["calendar_sync"] == "failed"
+    # Regression: the audit trail used to store the placeholder "degraded" instead of
+    # the provider's own error, so a failed sync was indistinguishable from any other
+    # on the dashboard — no way for the operator to tell *why* it failed.
+    assert intents[0]["calendar_sync_detail"] == "FakeCalendar is configured to fail upsert"
 
 
 def test_a_resource_with_no_provider_is_a_silent_no_op(

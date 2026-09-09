@@ -29,17 +29,23 @@ import logging
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import quote_plus, unquote_plus
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from calon.api.deps import AuthorisedOperator, CalendarRegistryDep, DatabaseDep, SettingsDep
+from calon.api.deps import (
+    AuthorisedOperator,
+    CalendarRegistryDep,
+    DatabaseDep,
+    SettingsDep,
+    get_authorised_operator,
+)
 from calon.api.v1 import _calendar_writeback
 from calon.calendarkit import build_deeplinks, event_for, event_uid, ics_filename
 from calon.calendars import CalendarProviderError
@@ -55,7 +61,7 @@ from calon.models import (
     CalendarOAuthClientRow,
 )
 from calon.schemas import BookingIntentIn, CalendarHandoff, CalendarLinksOut, RequesterIn
-from calon.security import SESSION_COOKIE, derive_login_key, verify_oauth_state
+from calon.security import SESSION_COOKIE, LoginStore, derive_login_key, verify_oauth_state
 from calon.services import booking_service, calendar_connect_service
 
 __all__ = ["router"]
@@ -66,6 +72,57 @@ router = APIRouter(tags=["web"])
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(_TEMPLATES_DIR)
+
+
+# ---------------------------------------------------------------------------
+# Operator login gate for HTML routes
+# ---------------------------------------------------------------------------
+#
+# A human clicking around the dashboard with a lapsed or missing session should land
+# back on the login form, not see the bare JSON 401 that calon.api.deps.AuthorisedOperator
+# answers with — that gate is also the JSON API's (api/v1/bookings.py), which rightly
+# keeps a plain 401 for a curl-type caller. _require_operator wraps the same check and
+# turns only the 401 case into a redirect; a 503 (no CALON_LOGIN configured at all) is a
+# real misconfiguration with nothing to log back into, so it still surfaces as-is.
+
+
+class _LoginRequiredError(Exception):
+    """Signals an HTML admin route hit an expired/missing session (see above)."""
+
+
+def _require_operator(request: Request, settings: SettingsDep) -> LoginStore:
+    try:
+        return get_authorised_operator(request, settings)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+            raise _LoginRequiredError from exc
+        raise
+
+
+RequireOperator = Annotated[LoginStore, Depends(_require_operator)]
+
+
+def install_error_handlers(app: FastAPI) -> None:
+    """Register the redirect-to-login handler. ``create_app`` calls this once.
+
+    An ``APIRouter`` cannot register exception handlers itself — only the ``FastAPI`` app
+    can — so this has to run after ``app.include_router(router)``.
+    """
+
+    @app.exception_handler(_LoginRequiredError)
+    def _redirect_to_login(request: Request, exc: _LoginRequiredError) -> RedirectResponse:
+        return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    """Land the bare host on the dashboard instead of FastAPI's default 404.
+
+    Nothing else serves the root path — the booking form has its own (``/book``) and is
+    reached by its own link, never by typing the bare host. ``/admin`` itself redirects
+    on to ``/login`` via :data:`RequireOperator` when there is no valid session.
+    """
+    return RedirectResponse("/admin", status_code=status.HTTP_302_FOUND)
 
 
 # ---------------------------------------------------------------------------
@@ -379,11 +436,11 @@ def dashboard(
     request: Request,
     database: DatabaseDep,
     settings: SettingsDep,
-    _operator: AuthorisedOperator,
+    _operator: RequireOperator,
 ) -> HTMLResponse:
     """The operator's home: what this instance does, its calendars, and every booking.
 
-    Gated by the operator's login (the ``AuthorisedOperator`` dependency). A request
+    Gated by the operator's login (the ``RequireOperator`` dependency). A request
     without a valid session or API key gets a ``401``.
 
     Three panels, in the order an operator needs them: an **overview** of every function
@@ -822,6 +879,7 @@ def _load_intents(session: Session, *, limit: int = 50) -> list[dict[str, object
     # one. A booking with neither row never had a provider to sync to, or the sync
     # hasn't run yet.
     sync_status_by_booking: dict[str, str] = {}
+    sync_detail_by_booking: dict[str, str] = {}
     booking_ids = [b.id for b in bookings_by_intent.values()]
     if booking_ids:
         audit_rows = (
@@ -839,12 +897,19 @@ def _load_intents(session: Session, *, limit: int = 50) -> list[dict[str, object
             .all()
         )
         for row in audit_rows:
-            if row.booking_id is None:
+            if row.booking_id is None or row.booking_id in sync_status_by_booking:
                 continue
-            sync_status_by_booking.setdefault(
-                row.booking_id,
-                "synced" if row.event_type == "booking.calendar_synced" else "failed",
-            )
+            if row.event_type == "booking.calendar_synced":
+                sync_status_by_booking[row.booking_id] = "synced"
+            else:
+                sync_status_by_booking[row.booking_id] = "failed"
+                # The provider's own error message, e.g. "google: PATCH
+                # https://.../events/<id> returned 403" — safe to show (see
+                # _calendar_writeback.perform_write_back) and the closest thing the
+                # dashboard has to a debug log for a failed write-back.
+                detail = row.payload_json.get("provider_error")
+                if detail:
+                    sync_detail_by_booking[row.booking_id] = str(detail)
 
     result: list[dict[str, object]] = []
     for intent in rows:
@@ -866,6 +931,7 @@ def _load_intents(session: Session, *, limit: int = 50) -> list[dict[str, object
                 "start": booking.start_utc.isoformat() if booking and booking.start_utc else None,
                 "ics_url": f"/api/v1/bookings/{booking.id}/calendar.ics" if booking else None,
                 "calendar_sync": sync_status_by_booking.get(booking.id) if booking else None,
+                "calendar_sync_detail": sync_detail_by_booking.get(booking.id) if booking else None,
             }
         )
     return result

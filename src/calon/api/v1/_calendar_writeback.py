@@ -92,6 +92,7 @@ def perform_write_back(
     )
 
     synced = True
+    provider_error: str | None = None
     try:
         calendar_registry.upsert_event(resource_slug, provider_event)
     except CalendarProviderError as exc:
@@ -102,6 +103,11 @@ def perform_write_back(
             exc_info=exc,
         )
         synced = False
+        # CalendarProviderError's message is documented as safe to log and display: the
+        # providers guarantee it never echoes a token. Storing it (rather than the
+        # placeholder "degraded" this used to carry) is what lets the operator dashboard
+        # show *why* a sync failed instead of just that it did.
+        provider_error = str(exc)
 
     # Audit the write-back outcome in its own short write session.
     with database.write() as session:
@@ -114,7 +120,7 @@ def perform_write_back(
             booking_id=booking.id,
             payload={
                 "uid": booking.ics_uid,
-                "provider_error": None if synced else "degraded",
+                "provider_error": provider_error,
             },
         )
 
