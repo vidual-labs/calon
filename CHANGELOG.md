@@ -109,6 +109,16 @@ per user-visible change, describing the effect rather than the implementation.
   Calendar, reconnect it** (Forget credentials, then Connect with Google again)
   to pick up the new scope — the fix does not apply retroactively to an
   existing refresh token.
+- Writing a brand-new booking to a connected Google Calendar always failed with
+  a bare `400`, so no accepted booking ever actually landed in the calendar (only
+  the `.ics` download and deeplinks worked). The write-back's create call sent
+  both a caller-chosen event id and an `iCalUID`, a combination Google's API
+  rejects outright; it now sends only the id on create, and still tags the
+  event with `iCalUID` on every later update. A degraded free/busy check or
+  failed write-back now also logs the calendar provider's own error message
+  (e.g. "Request had insufficient authentication scopes"), not just an HTTP
+  status code, so a silent degrade can actually be diagnosed from the server
+  log.
 - The operator dashboard's Bookings table showed only the requester's `.ics`
   download link, with no way to tell whether an accepted booking was actually
   written to a connected calendar or the write silently failed. The Calendar

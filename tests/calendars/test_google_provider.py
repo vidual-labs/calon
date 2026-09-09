@@ -223,10 +223,12 @@ class TestUpsertHttp:
         assert methods == ["PATCH", "POST"]
         post_call = next(s for s in api_calls if s["method"] == "POST")
         # The create call forces the same derived id, so a re-run of the write-back
-        # (which always PATCHes that id first) finds this exact event.
+        # (which always PATCHes that id first) finds this exact event. It must NOT
+        # also carry iCalUID: Google rejects an insert that sets both "id" and
+        # "iCalUID" with a 400 (the bug this test now guards against).
         sent = json.loads(post_call["body"])
         assert sent["id"] == google_id
-        assert sent["iCalUID"] == self.UID
+        assert "iCalUID" not in sent
         provider.close()
 
     def test_two_different_uids_derive_different_ids(self):
