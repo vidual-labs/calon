@@ -154,8 +154,16 @@ class GoogleCalendarProvider(ProviderTransport):
         is instead keyed by :func:`_google_event_id`, a deterministic hash of the UID
         that *is* a valid id: the same booking always maps to the same Google event, so
         the upsert stays idempotent even though the two ids differ. ``event.uid`` is
-        additionally set as the event's ``iCalUID`` field, which is what Google itself
-        (and anything reading the event outside calon) uses to recognise it.
+        additionally set as the event's ``iCalUID`` field on the ``PATCH`` path, which is
+        what Google itself (and anything reading the event outside calon) uses to
+        recognise it.
+
+        The create (``POST``) path deliberately omits ``iCalUID``: Google's API
+        documents ``id`` and ``iCalUID`` as mutually exclusive "at event creation
+        time" and returns a bare ``400`` if both are supplied on an insert — exactly the
+        combination the previous version of this method sent, which is why a brand-new
+        booking's write-back failed outright the first time (the follow-up ``PATCH`` on
+        a re-run still carries it, since that is an update, not a creation).
         """
         google_id = _google_event_id(event.uid)
         payload = {
@@ -175,9 +183,9 @@ class GoogleCalendarProvider(ProviderTransport):
             if exc.status_code != 404:
                 raise
             base = f"{_API_BASE}/calendars/{self.calendar_id}/events"
-            # The id is only settable at creation time; the PATCH path addresses the
-            # existing resource by URL and must not send "id" in the payload.
-            self._request("POST", base, json_body={**payload, "id": google_id})
+            create_payload = {k: v for k, v in payload.items() if k != "iCalUID"}
+            create_payload["id"] = google_id
+            self._request("POST", base, json_body=create_payload)
 
 
 def _rfc3339(moment: datetime) -> str:

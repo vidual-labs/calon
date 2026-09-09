@@ -37,6 +37,29 @@ __all__ = [
 ]
 
 
+def _error_detail(response: httpx.Response) -> str:
+    """The provider's own reason for an HTTP error, safe to log (CLAUDE.md §8).
+
+    Google and Microsoft both answer an error with a JSON body carrying a human-readable
+    message (``{"error": {"message": ...}}`` for Google, ``{"error": {"message": ...}}``
+    for Graph too) — surfacing it is the difference between a log line that says "POST
+    ... returned 400" and one that says *why*, which is what makes a failed write-back or
+    a degraded free/busy check debuggable without a live capture. Neither provider's error
+    body ever contains a token or secret, only a description of what was wrong with the
+    request. Falls back to the raw (truncated) body when it is not the expected shape.
+    """
+    try:
+        body = response.json()
+    except (JSONDecodeError, ValueError):
+        return response.text[:300]
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message:
+            return message
+    return str(body)[:300]
+
+
 def calendar_error(
     where: str, detail: str = "", *, status_code: int | None = None
 ) -> CalendarProviderError:
@@ -283,7 +306,7 @@ class ProviderTransport:
         if response.status_code >= 400:
             raise calendar_error(
                 self.provider_name,
-                f"{method} {url} returned {response.status_code}",
+                f"{method} {url} returned {response.status_code}: {_error_detail(response)}",
                 status_code=response.status_code,
             )
         return response
