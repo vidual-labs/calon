@@ -44,7 +44,13 @@ _API_BASE = "https://www.googleapis.com/calendar/v3"
 AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 #: Matches the scope requested by the out-of-band flow documented in
 #: ``docs/self-hosting.md`` — the connect flow asks for the same access, no more.
-SCOPE = "https://www.googleapis.com/auth/calendar.events"
+#: ``calendar.events`` alone covers :meth:`GoogleCalendarProvider.upsert_event` but Google
+#: rejects ``freeBusy.query`` under it with a 403 — that endpoint requires ``calendar``,
+#: ``calendar.readonly``, or ``calendar.freebusy``. Without the latter scope, every
+#: :meth:`GoogleCalendarProvider.free_busy` call fails and the registry silently degrades
+#: to "no busy time" (CLAUDE.md §2), so calon offers slots that are actually taken on the
+#: connected calendar.
+SCOPE = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.freebusy"
 
 
 def build_authorize_url(*, client_id: str, redirect_uri: str, state: str) -> str:

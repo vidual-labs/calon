@@ -47,6 +47,7 @@ from calon.clock import utcnow
 from calon.config import OperatorConfig, Settings
 from calon.intake import native
 from calon.models import (
+    AuditEvent,
     Booking,
     BookingIntent,
     CalendarCredentialRow,
@@ -815,6 +816,36 @@ def _load_intents(session: Session, *, limit: int = 50) -> list[dict[str, object
         for b in b_rows:
             bookings_by_intent[b.intent_id] = b
 
+    # The write-back audits its outcome as one of two event types keyed by booking_id
+    # (``_calendar_writeback.perform_write_back``); the most recent row per booking is
+    # what the dashboard shows, since a retried sync could in principle leave more than
+    # one. A booking with neither row never had a provider to sync to, or the sync
+    # hasn't run yet.
+    sync_status_by_booking: dict[str, str] = {}
+    booking_ids = [b.id for b in bookings_by_intent.values()]
+    if booking_ids:
+        audit_rows = (
+            session.execute(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.booking_id.in_(booking_ids),
+                    AuditEvent.event_type.in_(
+                        ["booking.calendar_synced", "booking.calendar_sync_failed"]
+                    ),
+                )
+                .order_by(AuditEvent.seq.desc())
+            )
+            .scalars()
+            .all()
+        )
+        for row in audit_rows:
+            if row.booking_id is None:
+                continue
+            sync_status_by_booking.setdefault(
+                row.booking_id,
+                "synced" if row.event_type == "booking.calendar_synced" else "failed",
+            )
+
     result: list[dict[str, object]] = []
     for intent in rows:
         booking = bookings_by_intent.get(intent.id)
@@ -834,6 +865,7 @@ def _load_intents(session: Session, *, limit: int = 50) -> list[dict[str, object
                 "booking_id": booking.id if booking else None,
                 "start": booking.start_utc.isoformat() if booking and booking.start_utc else None,
                 "ics_url": f"/api/v1/bookings/{booking.id}/calendar.ics" if booking else None,
+                "calendar_sync": sync_status_by_booking.get(booking.id) if booking else None,
             }
         )
     return result

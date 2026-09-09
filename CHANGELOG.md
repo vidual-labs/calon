@@ -91,6 +91,20 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Fixed
 
+- A connected Google Calendar's free/busy check always came back empty, so calon
+  could offer and accept a slot that was already booked on that calendar. The
+  OAuth connect flow only ever requested the `calendar.events` scope, which
+  Google accepts for writing events but rejects with a 403 for free/busy
+  lookups; that failure degraded silently to "no busy time" (by design, for an
+  unreachable provider) instead of surfacing a scope problem. The connect flow
+  now also requests `calendar.freebusy`. **If you already connected a Google
+  Calendar, reconnect it** (Forget credentials, then Connect with Google again)
+  to pick up the new scope — the fix does not apply retroactively to an
+  existing refresh token.
+- The operator dashboard's Bookings table showed only the requester's `.ics`
+  download link, with no way to tell whether an accepted booking was actually
+  written to a connected calendar or the write silently failed. The Calendar
+  column now shows "Synced" or "Sync failed" next to the download link.
 - An OpenFlow form's start/end answer with no UTC offset (the common case for a
   form's own date/time fields) was interpreted in the server process's local
   timezone instead of the form's configured one, which could book the wrong hour
