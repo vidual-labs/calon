@@ -181,6 +181,19 @@ def save_oauth_client(
         )
     if not client_id or not client_secret:
         raise CalendarNotConfiguredError("both the client id and the client secret are required")
+    if not calendar_id:
+        # "primary" used to be accepted as a stand-in for a blank field, but it is a
+        # Google API alias for "whoever is authenticated" — not an identity. A dashboard
+        # showing "primary" next to a connected resource gives an operator no way to
+        # tell *which* Google account is behind it, especially with more than one
+        # resource connected. Requiring the real address up front is the only way to
+        # make that visible without asking Google for it (a new OAuth scope, and
+        # another reconnect for anyone already connected).
+        raise CalendarNotConfiguredError(
+            "the calendar id is required — use the connected account's email address, "
+            "not the Google API's own 'primary' alias, so the dashboard can show which "
+            "account a resource is connected to"
+        )
     if session.get(CalendarFeedRow, resource_slug) is not None:
         raise CalendarNotConfiguredError(
             f"{resource_slug} already subscribes to a calendar feed; remove that first if "
@@ -193,7 +206,7 @@ def save_oauth_client(
             CalendarOAuthClientRow(
                 resource_slug=resource_slug,
                 provider=provider,
-                calendar_id=calendar_id or "primary",
+                calendar_id=calendar_id,
                 client_id=client_id,
                 client_secret=client_secret,
                 created_at_utc=now,
@@ -202,7 +215,7 @@ def save_oauth_client(
         )
         return
     row.provider = provider
-    row.calendar_id = calendar_id or "primary"
+    row.calendar_id = calendar_id
     row.client_id = client_id
     row.client_secret = client_secret
     row.updated_at_utc = now

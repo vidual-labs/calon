@@ -88,6 +88,14 @@ per user-visible change, describing the effect rather than the implementation.
   than booting into a calendar sync that can never work. If you already have a
   `[calendars.*]` block enabled, add both before upgrading (see
   `docs/self-hosting.md`).
+- The dashboard's "Connect with Google" setup form now requires a `calendar_id`
+  (the connected account's own email address) instead of silently accepting a
+  blank field as the Google API's `primary` alias. A blank field gave the
+  dashboard no way to say which Google account a connected resource actually
+  belongs to — with more than one calendar connected, every row looked the
+  same. Already-connected resources are unaffected; this only applies the next
+  time you save the form. `config/calon.toml`'s own `calendar_id` is unchanged
+  and still defaults to `primary`.
 
 ### Fixed
 

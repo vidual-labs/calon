@@ -356,6 +356,16 @@ class TestDashboardOAuthClient:
         assert "calendar_error=" in response.headers["location"]
         assert "Not configured" in standalone.get("/admin").text
 
+    def test_an_empty_calendar_id_is_refused(self, standalone: TestClient) -> None:
+        # Regression: a blank calendar_id used to be silently accepted and stored as the
+        # literal string "primary" — a Google API alias for "whoever is authenticated",
+        # not an identity. That left the dashboard with no way to say which Google
+        # account a connected resource actually belongs to, so the field is now required.
+        response = self._save(standalone, calendar_id="")
+        assert response.status_code == 303
+        assert "calendar_error=" in response.headers["location"]
+        assert "Not configured" in standalone.get("/admin").text
+
     def test_a_toml_configured_resource_refuses_the_form(self, operator_client: TestClient) -> None:
         """The file wins at resolution time, so storing a row that never applies is worse."""
         response = self._save(operator_client)
@@ -603,7 +613,7 @@ class TestDashboardCalendarFeed:
         self._subscribe(standalone)
         saved = standalone.post(
             "/calendars/default/oauth-client",
-            data={"client_id": "cid", "client_secret": "sec", "calendar_id": ""},
+            data={"client_id": "cid", "client_secret": "sec", "calendar_id": "you@example.com"},
             follow_redirects=False,
         )
         assert "calendar_error=" in saved.headers["location"]
@@ -611,7 +621,7 @@ class TestDashboardCalendarFeed:
         standalone.post("/calendars/default/feed/forget", follow_redirects=False)
         saved_again = standalone.post(
             "/calendars/default/oauth-client",
-            data={"client_id": "cid", "client_secret": "sec", "calendar_id": ""},
+            data={"client_id": "cid", "client_secret": "sec", "calendar_id": "you@example.com"},
             follow_redirects=False,
         )
         assert saved_again.headers["location"].startswith("/admin?calendar_saved=")

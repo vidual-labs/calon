@@ -274,10 +274,14 @@
               <input id="client_secret-{{ cal.resource_slug }}" name="client_secret" type="password"
                      required autocomplete="off" placeholder="GOCSPX-...">
               <label for="calendar_id-{{ cal.resource_slug }}">
-                Calendar id &mdash; the account's email, or blank for its primary calendar
+                Calendar id &mdash; the connected account's email address
               </label>
-              <input id="calendar_id-{{ cal.resource_slug }}" name="calendar_id"
+              <input id="calendar_id-{{ cal.resource_slug }}" name="calendar_id" required
                      autocomplete="off" spellcheck="false" placeholder="you@example.com">
+              <p class="hint" style="margin-top:6px">
+                Required, and shown next to this resource once connected &mdash; so with more
+                than one calendar connected, you can tell which Google account is which.
+              </p>
               <button type="submit" class="btn">Save and enable connecting</button>
             </form>
             <hr style="border:none; border-top:1px solid var(--border); margin:18px 0 14px">

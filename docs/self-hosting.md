@@ -248,8 +248,10 @@ refresh_token = "..."          # only if not using the dashboard's Connect butto
    on the dashboard prints the exact URI your instance will use; copy it from there rather
    than typing it, since a mismatch is the most common cause of a failed connect.
 3. Log in to the operator dashboard (`/admin`), and in the **Calendars** panel paste the
-   client id and client secret, plus the `calendar_id` (the account's email for its primary
-   calendar; leave blank for `primary`). Save.
+   client id and client secret, plus the `calendar_id` — the connected account's email
+   address. This is **required**: it is what the dashboard shows next to a connected
+   resource, so with more than one calendar connected you can tell which Google account is
+   which. Save.
 4. Click **Connect with Google**. Approve the consent screen — Google requests the
    `https://www.googleapis.com/auth/calendar.events` and
    `https://www.googleapis.com/auth/calendar.freebusy` scopes — and you are redirected
