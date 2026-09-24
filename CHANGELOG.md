@@ -12,6 +12,15 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- **Calendar credentials are now stored encrypted.** Set `CALON_SECRET_KEY` (generate it
+  with `openssl rand -base64 32`) and calon encrypts the Google refresh tokens, OAuth
+  client secrets and feed addresses it keeps in `calon.db`, so a backup or copy of the
+  database no longer gives away your calendars. Credentials already stored are encrypted
+  at the first start with a key, with no reconnecting. Keep the key apart from your
+  backups. To change it, move the old key to `CALON_SECRET_KEY_PREVIOUS` for one restart.
+  Bookings are not encrypted and never depend on the key: if it is lost, only the calendar
+  connections need setting up again.
+
 - **The booking page now shows what is actually free.** `/book` opens on a month
   calendar with the bookable days lit up, the times for the day you pick beside it (12h or
   24h, your choice), and the details form after that — instead of a blank date and time
@@ -77,6 +86,12 @@ per user-visible change, describing the effect rather than the implementation.
   a failed connect) is visible in the dashboard instead of only in `docs/self-hosting.md`.
 
 ### Changed
+
+- **BREAKING:** the Calendars panel now refuses to store calendar credentials (an OAuth
+  client, a Google connection, or a feed address) until `CALON_SECRET_KEY` is set, and
+  says so. Calendars you already connected keep working after the upgrade; set the key
+  before you change or add one. Calendars configured in `config/calon.toml` are not
+  affected.
 
 - **BREAKING:** the operator dashboard moved from `/bookings` to `/admin`. The page and
   its login are unchanged — only the address is. Update your bookmark, and any reverse
@@ -194,7 +209,29 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Security
 
-- _Nothing yet._
+- **`calon.db` is now readable by its owner only.** It holds your calendar refresh tokens,
+  OAuth client secrets and feed addresses as well as requesters' personal data, but was
+  created readable by every account on the host. calon now creates it (and its `-wal` and
+  `-shm` files) with mode `0600`, and tightens an existing database the next time it
+  starts — no action needed. Keep your backups equally private.
+- **Repeated wrong logins are now refused for a while.** After 10 failed attempts from one
+  address within 15 minutes, `/login` answers `429` until the oldest failure is 15
+  minutes old; a wrong `CALON_API_KEY` counts the same way. A login attempt no longer
+  holds up every other request while the key is checked. Behind a reverse proxy, set
+  `FORWARDED_ALLOW_IPS` to the proxy's address so each visitor is counted separately —
+  otherwise all visitors share one counter (see `docs/self-hosting.md`).
+- **`docker compose` now publishes calon on `127.0.0.1` only**, as its own comment always
+  said. It used to listen on every interface, so the login could reach the network
+  unencrypted, bypassing your TLS proxy. If you reached calon directly by the host's
+  address rather than through a proxy on the same host, put a proxy in front or change
+  the port mapping back deliberately.
+- A malformed `Authorization: Bearer` header, a malformed signature header on external
+  intake, or a malformed JSON login no longer causes a server error; each is refused like
+  any other wrong credential.
+- A subscribed calendar feed is now cut off once it passes the 5 MB limit, instead of
+  being downloaded in full first — a broken or hostile feed address can no longer make
+  calon buffer an unbounded response.
+
 ## [0.3.0] - 2026-08-19
 
 ### Added

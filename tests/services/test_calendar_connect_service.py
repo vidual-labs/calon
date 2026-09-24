@@ -24,9 +24,13 @@ from calon.clock import utcnow
 from calon.config import CalendarProviderConfig, OperatorConfig
 from calon.db import Database
 from calon.models import CalendarCredentialRow
+from calon.security.secretbox import SecretBox
 from calon.services import calendar_connect_service
 
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+#: Storing a calendar secret requires a key (ADR 0019); any fixed one will do here.
+BOX = SecretBox("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 
 
 def _config(**overrides: object) -> OperatorConfig:
@@ -71,6 +75,7 @@ class TestStartConnect:
                 resource_slug="default",
                 redirect_uri=_REDIRECT_URI,
                 signing_key=b"0" * 32,
+                box=BOX,
             )
         assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
         assert "client_id=cid" in url
@@ -86,6 +91,26 @@ class TestStartConnect:
                 resource_slug="default",
                 redirect_uri=_REDIRECT_URI,
                 signing_key=b"0" * 32,
+                box=BOX,
+            )
+
+    def test_without_a_secret_key_nothing_is_started(
+        self, client: TestClient, database: Database
+    ) -> None:
+        """The flow ends by storing a refresh token, so it needs a key up front (ADR 0019)."""
+        with (
+            database.read() as session,
+            pytest.raises(
+                calendar_connect_service.CalendarNotConfiguredError, match="CALON_SECRET_KEY"
+            ),
+        ):
+            calendar_connect_service.start_connect(
+                session,
+                _config(),
+                resource_slug="default",
+                redirect_uri=_REDIRECT_URI,
+                signing_key=b"0" * 32,
+                box=SecretBox(),
             )
 
     def test_a_microsoft_resource_raises(self, client: TestClient, database: Database) -> None:
@@ -100,6 +125,7 @@ class TestStartConnect:
                 resource_slug="default",
                 redirect_uri=_REDIRECT_URI,
                 signing_key=b"0" * 32,
+                box=BOX,
             )
 
     def test_missing_client_credentials_raises(
@@ -116,6 +142,7 @@ class TestStartConnect:
                 resource_slug="default",
                 redirect_uri=_REDIRECT_URI,
                 signing_key=b"0" * 32,
+                box=BOX,
             )
 
 
@@ -135,6 +162,7 @@ class TestCompleteConnect:
                 code="auth-code",
                 redirect_uri="https://calon.example.com/calendars/google/callback",
                 now=utcnow(),
+                box=BOX,
                 client=_mock_client("token-1"),
             )
 
@@ -149,7 +177,7 @@ class TestCompleteConnect:
             row = session.get(CalendarCredentialRow, "default")
             assert row is not None
             assert row.provider == "google"
-            assert row.refresh_token == "token-1"
+            assert BOX.unseal(row.refresh_token) == "token-1"
             assert row.connected_at_utc == utcnow()
 
     def test_a_second_connect_updates_the_existing_row_rather_than_duplicating(
@@ -167,6 +195,7 @@ class TestCompleteConnect:
                 code="auth-code-1",
                 redirect_uri="https://calon.example.com/calendars/google/callback",
                 now=utcnow(),
+                box=BOX,
                 client=_mock_client("token-1"),
             )
         with database.write() as session:
@@ -178,13 +207,14 @@ class TestCompleteConnect:
                 code="auth-code-2",
                 redirect_uri="https://calon.example.com/calendars/google/callback",
                 now=utcnow(),
+                box=BOX,
                 client=_mock_client("token-2"),
             )
 
         with database.read() as session:
             rows = session.scalars(select(CalendarCredentialRow)).all()
             assert len(rows) == 1
-            assert rows[0].refresh_token == "token-2"
+            assert BOX.unseal(rows[0].refresh_token) == "token-2"
 
         provider = registry.provider_for("default")
         assert isinstance(provider, GoogleCalendarProvider)
@@ -207,6 +237,7 @@ class TestCompleteConnect:
                 code="auth-code",
                 redirect_uri="https://calon.example.com/calendars/google/callback",
                 now=utcnow(),
+                box=BOX,
                 client=_mock_client(),
             )
 
@@ -230,6 +261,7 @@ class TestDisconnect:
                 code="auth-code",
                 redirect_uri="https://calon.example.com/calendars/google/callback",
                 now=utcnow(),
+                box=BOX,
                 client=_mock_client(),
             )
 

@@ -98,6 +98,12 @@ class TestVerifySignature:
         with pytest.raises(IntakeAuthError, match="signature"):
             verify_signature({**headers, SIGNATURE_HEADER: tampered}, BODY, secret=SECRET, now=NOW)
 
+    def test_a_non_ascii_signature_fails_as_a_mismatch_rather_than_raising(self) -> None:
+        headers = signed_headers()
+        bad = "sha256=" + "\u00e4" * 64
+        with pytest.raises(IntakeAuthError, match="signature"):
+            verify_signature({**headers, SIGNATURE_HEADER: bad}, BODY, secret=SECRET, now=NOW)
+
     def test_missing_signature_header_fails(self) -> None:
         headers = dict(signed_headers())
         del headers[SIGNATURE_HEADER]

@@ -27,6 +27,8 @@ from calon.security import derive_login_key, new_oauth_state
 from tests.conftest import NOW
 
 LOGIN = "op-key-123"
+#: A fixed ``CALON_SECRET_KEY`` (32 zero bytes, base64): storing calendar secrets needs one.
+SECRET_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 
 def _google_config(**overrides: object) -> OperatorConfig:
@@ -51,7 +53,11 @@ def _log_in(client: TestClient) -> None:
 def operator_client(tmp_path: Path) -> Iterator[TestClient]:
     """A logged-in operator, with ``[calendars.default]`` set up for Google."""
     settings = Settings(
-        db_path=tmp_path / "calon.db", config_path=None, login=LOGIN, base_url="http://testserver"
+        db_path=tmp_path / "calon.db",
+        config_path=None,
+        login=LOGIN,
+        secret_key=SECRET_KEY,
+        base_url="http://testserver",
     )
     with (
         time_machine.travel(NOW, tick=False),
@@ -104,7 +110,9 @@ class TestCalendarConnectRoute:
         assert response.headers["location"].startswith("/admin?calendar_error=")
 
     def test_requires_the_operator_login(self, tmp_path: Path) -> None:
-        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        settings = Settings(
+            db_path=tmp_path / "calon.db", config_path=None, login=LOGIN, secret_key=SECRET_KEY
+        )
         with (
             time_machine.travel(NOW, tick=False),
             TestClient(create_app(settings, _google_config())) as anonymous,
@@ -170,7 +178,9 @@ class TestCalendarConnectCallback:
         assert "Not connected" in operator_client.get("/admin").text
 
     def test_callback_requires_the_operator_login(self, tmp_path: Path) -> None:
-        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        settings = Settings(
+            db_path=tmp_path / "calon.db", config_path=None, login=LOGIN, secret_key=SECRET_KEY
+        )
         with (
             time_machine.travel(NOW, tick=False),
             TestClient(create_app(settings, _google_config())) as anonymous,
@@ -209,7 +219,9 @@ class TestCalendarDisconnect:
         assert "Not connected" in dashboard.text
 
     def test_disconnect_requires_the_operator_login(self, tmp_path: Path) -> None:
-        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        settings = Settings(
+            db_path=tmp_path / "calon.db", config_path=None, login=LOGIN, secret_key=SECRET_KEY
+        )
         with (
             time_machine.travel(NOW, tick=False),
             TestClient(create_app(settings, _google_config())) as anonymous,
@@ -230,6 +242,7 @@ class TestDashboardCalendarsPanel:
             db_path=tmp_path / "calon.db",
             config_path=None,
             login=LOGIN,
+            secret_key=SECRET_KEY,
             base_url="http://testserver",
         )
         with (
@@ -258,7 +271,9 @@ class TestDashboardOverviewPanel:
     """The functions overview: what the instance exposes, under which rules."""
 
     def test_it_lists_the_functions_and_the_rules_in_force(self, tmp_path: Path) -> None:
-        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        settings = Settings(
+            db_path=tmp_path / "calon.db", config_path=None, login=LOGIN, secret_key=SECRET_KEY
+        )
         with (
             time_machine.travel(NOW, tick=False),
             TestClient(create_app(settings)) as client,
@@ -286,7 +301,9 @@ class TestDashboardOverviewPanel:
                 )
             },
         )
-        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        settings = Settings(
+            db_path=tmp_path / "calon.db", config_path=None, login=LOGIN, secret_key=SECRET_KEY
+        )
         with (
             time_machine.travel(NOW, tick=False),
             TestClient(create_app(settings, config)) as client,
@@ -306,6 +323,7 @@ class TestDashboardOAuthClient:
             db_path=tmp_path / "calon.db",
             config_path=None,
             login=LOGIN,
+            secret_key=SECRET_KEY,
             base_url="http://testserver",
         )
         with (
@@ -430,6 +448,7 @@ class TestDashboardOAuthClient:
             db_path=tmp_path / "calon.db",
             config_path=None,
             login=LOGIN,
+            secret_key=SECRET_KEY,
             base_url="http://testserver",
         )
         monkeypatch.setattr(
@@ -454,7 +473,9 @@ class TestDashboardOAuthClient:
 
     def test_a_saved_client_with_no_connection_builds_no_provider(self, tmp_path: Path) -> None:
         """Credentials alone are not a connection — standalone until the consent round trip."""
-        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        settings = Settings(
+            db_path=tmp_path / "calon.db", config_path=None, login=LOGIN, secret_key=SECRET_KEY
+        )
         with time_machine.travel(NOW, tick=False), TestClient(create_app(settings)) as first:
             _log_in(first)
             self._save(first)
@@ -464,7 +485,9 @@ class TestDashboardOAuthClient:
             assert registry.provider_for("default") is None
 
     def test_requires_the_operator_login(self, tmp_path: Path) -> None:
-        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        settings = Settings(
+            db_path=tmp_path / "calon.db", config_path=None, login=LOGIN, secret_key=SECRET_KEY
+        )
         with (
             time_machine.travel(NOW, tick=False),
             TestClient(create_app(settings)) as anonymous,
@@ -499,6 +522,7 @@ class TestDashboardCalendarFeed:
             db_path=tmp_path / "calon.db",
             config_path=None,
             login=LOGIN,
+            secret_key=SECRET_KEY,
             base_url="http://testserver",
         )
         with (
@@ -639,6 +663,7 @@ class TestDashboardCalendarFeed:
             db_path=tmp_path / "calon.db",
             config_path=None,
             login=LOGIN,
+            secret_key=SECRET_KEY,
             base_url="http://testserver",
         )
         with time_machine.travel(NOW, tick=False), TestClient(create_app(settings)) as first:
@@ -652,7 +677,9 @@ class TestDashboardCalendarFeed:
             assert provider.name == "ics"
 
     def test_requires_the_operator_login(self, tmp_path: Path) -> None:
-        settings = Settings(db_path=tmp_path / "calon.db", config_path=None, login=LOGIN)
+        settings = Settings(
+            db_path=tmp_path / "calon.db", config_path=None, login=LOGIN, secret_key=SECRET_KEY
+        )
         with (
             time_machine.travel(NOW, tick=False),
             TestClient(create_app(settings)) as anonymous,

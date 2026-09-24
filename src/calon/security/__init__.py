@@ -18,6 +18,8 @@ The primitives here are all stdlib on purpose — no new dependency (``CLAUDE.md
 * **OAuth connect state** (:func:`new_oauth_state`/:func:`verify_oauth_state`) — a signed,
   timestamped value the calendar connect flow (ADR 0014) round-trips through the
   provider's own redirect, so the callback can trust it without a server-side state store.
+* **Login throttle** (:class:`LoginThrottle`) — a per-client cap on failed logins, so the
+  one shared key cannot be guessed at the speed of the network.
 """
 
 from __future__ import annotations
@@ -26,12 +28,14 @@ import base64
 import hashlib
 import hmac
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 
 __all__ = [
     "SESSION_COOKIE",
     "LoginStore",
+    "LoginThrottle",
     "SessionTable",
     "derive_login_key",
     "format_password_hash",
@@ -246,8 +250,86 @@ def verify_oauth_state(
     return resource_slug
 
 
+# -----------------------------------------------------------------------------
+# Login throttle
+# -----------------------------------------------------------------------------
+
+#: Failed logins a single client may make inside :data:`_LOGIN_FAILURE_WINDOW_SECONDS`
+#: before it is refused without the key even being checked. Generous for a human who
+#: mistypes; a hard ceiling for a script.
+_LOGIN_MAX_FAILURES = 10
+_LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
+_LOGIN_SWEEP_INTERVAL_SECONDS = 60
+
+
+class LoginThrottle:
+    """Counts failed logins per client address, in memory, over a sliding window.
+
+    calon has exactly one operator key, so the only thing between an attacker and that
+    key is how fast they can guess it. Once a client has :data:`_LOGIN_MAX_FAILURES`
+    failures inside the window, :meth:`retry_after` says how long it must wait; the login
+    route refuses it with ``429`` before running the (deliberately slow) key hash, which
+    also keeps a flood of guesses from costing the server a hash each.
+
+    Keyed by the address the server sees. Behind a reverse proxy that is the proxy's
+    address unless the server is told to trust ``X-Forwarded-For`` (see
+    ``docs/self-hosting.md``); otherwise every client shares one counter. In-process like
+    :class:`SessionTable`: a restart clears it.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_failures: int = _LOGIN_MAX_FAILURES,
+        window_seconds: int = _LOGIN_FAILURE_WINDOW_SECONDS,
+    ) -> None:
+        self._max_failures = max_failures
+        self._window_seconds = window_seconds
+        self._failures: dict[str, list[float]] = {}
+        self._last_sweep = 0.0
+        # The Bearer check runs in FastAPI's threadpool, the login form on the event loop:
+        # both mutate this table, so every access holds the lock.
+        self._lock = threading.Lock()
+
+    def _recent(self, client: str, now: float) -> list[float]:
+        cutoff = now - self._window_seconds
+        return [at for at in self._failures.get(client, ()) if at > cutoff]
+
+    def retry_after(self, client: str, now: float | None = None) -> int:
+        """Seconds until ``client`` may try again; ``0`` if it may try now."""
+        current = now if now is not None else time.time()
+        with self._lock:
+            recent = self._recent(client, current)
+        if len(recent) < self._max_failures:
+            return 0
+        # The oldest failure that still counts has to age out before a slot frees up.
+        oldest_counted = recent[-self._max_failures]
+        return max(1, int(oldest_counted + self._window_seconds - current) + 1)
+
+    def record_failure(self, client: str, now: float | None = None) -> None:
+        current = now if now is not None else time.time()
+        with self._lock:
+            # Drop addresses that stopped trying, so they do not accumulate for the life
+            # of the process. At most once a minute: sweeping on every failure would make
+            # a flood from many addresses cost quadratic time.
+            if current - self._last_sweep >= _LOGIN_SWEEP_INTERVAL_SECONDS:
+                self._last_sweep = current
+                for other in list(self._failures):
+                    kept = self._recent(other, current)
+                    if kept:
+                        self._failures[other] = kept
+                    else:
+                        del self._failures[other]
+            self._failures.setdefault(client, []).append(current)
+
+    def clear(self, client: str) -> None:
+        """Forget a client's failures — called after it logs in successfully."""
+        with self._lock:
+            self._failures.pop(client, None)
+
+
 class LoginStore:
-    """Holds the operator's login hash and the session table for one process.
+    """Holds the operator's login hash, the session table, and the login throttle.
 
     A thin wrapper so the rest of the app never does ``hmac`` or ``hashlib`` directly. It
     is constructed once at startup from the operator's login and exposed on
@@ -260,6 +342,7 @@ class LoginStore:
         self._hash = format_password_hash(login)
         self._signing_key = derive_login_key(login)
         self.sessions = SessionTable(self._signing_key, ttl_seconds=session_ttl_seconds)
+        self.throttle = LoginThrottle()
 
     def verify(self, candidate: str) -> bool:
         return verify_password_hash(self._hash, candidate)

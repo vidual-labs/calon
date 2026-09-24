@@ -39,6 +39,9 @@ responsibility rather than the application's:
   your reverse proxy if you do not need it exposed.
 - **Keep `config/calon.toml` out of version control.** It may contain per-source shared
   secrets. It is git-ignored by default.
-- **Back up the SQLite database file.** It is the entirety of your booking state.
+- **Back up the SQLite database file, and keep the backups private.** It is the entirety
+  of your booking state, and it holds any calendar credentials entered in the dashboard.
+  calon keeps the live file readable by its own account only; your backups need the same
+  care.
 - Booking data is personal data. Consider your retention obligations before enabling long
   audit history.

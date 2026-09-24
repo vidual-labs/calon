@@ -24,8 +24,10 @@ services:
     restart: unless-stopped
     ports:
       # Expose only the loopback address on the host. A reverse proxy should be
-      # the only thing that listens on 0.0.0.0 (see docs/self-hosting.md).
-      - "${CALON_HOST_PORT:-8000}:8000"
+      # the only thing that listens on 0.0.0.0 (see docs/self-hosting.md). Without
+      # the 127.0.0.1 prefix Docker publishes the port on every interface, and the
+      # login and session cookie would cross the network unencrypted.
+      - "127.0.0.1:${CALON_HOST_PORT:-8000}:8000"
     environment:
       # Database path inside the container. It is mounted as a named volume so
       # it survives container rebuilds.
@@ -41,6 +43,12 @@ services:
       # Optional: a shared API key for programmatic access to operator endpoints
       # (Authorization: Bearer <CALON_API_KEY>).
       CALON_API_KEY: ${CALON_API_KEY:-}
+      # Encrypts stored calendar credentials (ADR 0019); see .env.example.
+      CALON_SECRET_KEY: ${CALON_SECRET_KEY:-}
+      CALON_SECRET_KEY_PREVIOUS: ${CALON_SECRET_KEY_PREVIOUS:-}
+      # The reverse proxy's address as calon sees it, so the failed-login limit
+      # counts each visitor separately. Never "*" (see docs/self-hosting.md).
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
       # Runtime settings.
       CALON_LOG_LEVEL: ${CALON_LOG_LEVEL:-INFO}
       CALON_DOCS_ENABLED: ${CALON_DOCS_ENABLED:-false}

@@ -272,6 +272,68 @@ def test_logging_in_with_the_wrong_value_is_rejected(operator_client: TestClient
     assert response.status_code == 401
 
 
+def test_a_malformed_json_login_is_a_failed_login_not_a_server_error(
+    operator_client: TestClient,
+) -> None:
+    response = operator_client.post(
+        "/login", content=b"{not json", headers={"content-type": "application/json"}
+    )
+    assert response.status_code == 401
+
+
+def test_repeated_wrong_logins_are_throttled_even_for_the_right_key(
+    operator_client: TestClient,
+) -> None:
+    for _ in range(10):
+        assert operator_client.post("/login", json={"login": "wrong"}).status_code == 401
+    throttled = operator_client.post("/login", json={"login": "op-key-123"}, follow_redirects=False)
+    # Refused before the key is even checked: a guesser learns nothing more.
+    assert throttled.status_code == 429
+    assert int(throttled.headers["retry-after"]) > 0
+    assert "calon_session" not in throttled.headers.get("set-cookie", "")
+
+
+def test_a_successful_login_resets_the_failure_count(operator_client: TestClient) -> None:
+    for _ in range(9):
+        operator_client.post("/login", json={"login": "wrong"})
+    _log_in(operator_client, "op-key-123")
+    for _ in range(9):
+        assert operator_client.post("/login", json={"login": "wrong"}).status_code == 401
+
+
+@pytest.fixture
+def api_key_client(tmp_path: Path) -> Iterator[TestClient]:
+    """The real app with both ``CALON_LOGIN`` and ``CALON_API_KEY`` set."""
+    from calon.config import Settings
+    from calon.main import create_app
+
+    settings = Settings(
+        db_path=tmp_path / "calon.db", config_path=None, login="op-key-123", api_key="api-key"
+    )
+    with time_machine.travel(NOW, tick=False), TestClient(create_app(settings)) as test_client:
+        yield test_client
+
+
+def test_a_non_ascii_bearer_key_is_a_401_not_a_server_error(api_key_client: TestClient) -> None:
+    # httpx refuses to *send* a non-ASCII str header, so pass the raw latin-1 bytes a
+    # hostile client could put on the wire.
+    response = api_key_client.get(
+        "/api/v1/bookings/does-not-exist/calendar.ics",
+        headers={"Authorization": b"Bearer \xe4"},
+    )
+    assert response.status_code == 401
+
+
+def test_repeated_wrong_bearer_keys_are_throttled(api_key_client: TestClient) -> None:
+    path = "/api/v1/bookings/does-not-exist/calendar.ics"
+    for _ in range(10):
+        wrong = api_key_client.get(path, headers={"Authorization": "Bearer nope"})
+        assert wrong.status_code == 401
+    right = api_key_client.get(path, headers={"Authorization": "Bearer api-key"})
+    assert right.status_code == 429
+    assert int(right.headers["retry-after"]) > 0
+
+
 def test_login_sets_an_httponly_samesite_session_cookie(operator_client: TestClient) -> None:
     # Don't follow the redirect, so we can inspect the Set-Cookie on the login response
     # itself — that is where the security attributes (httponly, samesite) matter.

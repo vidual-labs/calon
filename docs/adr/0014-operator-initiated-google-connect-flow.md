@@ -1,6 +1,7 @@
 # 14. Operator-initiated Google Calendar connect flow, credential stored in SQLite
 
-- **Status:** Accepted
+- **Status:** Accepted; its "No encryption at rest" paragraph is superseded by
+  [ADR 0019](0019-encrypt-stored-calendar-secrets.md)
 - **Date:** 2026-08-27
 - **Supersedes (narrowly):** the parts of
   [ADR 0013](0013-minimal-http-client-and-sqlite-credential-store.md) that say "calon does

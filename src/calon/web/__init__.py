@@ -38,6 +38,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from calon.api.deps import (
     AuthorisedOperator,
@@ -62,6 +63,7 @@ from calon.models import (
 )
 from calon.schemas import BookingIntentIn, CalendarHandoff, CalendarLinksOut, RequesterIn
 from calon.security import SESSION_COOKIE, LoginStore, derive_login_key, verify_oauth_state
+from calon.security.secretbox import SecretBox
 from calon.services import booking_service, calendar_connect_service
 
 __all__ = ["router"]
@@ -386,8 +388,25 @@ async def login_submit(request: Request, settings: SettingsDep) -> Response:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
+    client = request.client.host if request.client is not None else "unknown"
+    wait = store.throttle.retry_after(client)
+    if wait:
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={
+                "error": "Too many failed logins from this address. "
+                f"Please try again in {-(-wait // 60)} minute(s)."
+            },
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            headers={"Retry-After": str(wait)},
+        )
+
     login_input = await _extract_login(request)
-    if store.verify(login_input):
+    # The key hash is deliberately slow; run it off the event loop so one login attempt
+    # does not stall every other request the process is serving.
+    if await run_in_threadpool(store.verify, login_input):
+        store.throttle.clear(client)
         token = store.create_session()
         # Build the redirect, then attach the session cookie to *that* response. Injecting
         # a separate ``response`` here would be a different object from the one FastAPI
@@ -401,6 +420,7 @@ async def login_submit(request: Request, settings: SettingsDep) -> Response:
             secure=settings.base_url.startswith("https://"),
         )
         return response
+    store.throttle.record_failure(client)
     return templates.TemplateResponse(
         request=request,
         name="login.html",
@@ -455,7 +475,7 @@ def dashboard(
     config: OperatorConfig = request.app.state.config
     with database.read() as session:
         intents = _load_intents(session, limit=50)
-        calendars = _load_calendar_status(session, config)
+        calendars = _load_calendar_status(session, config, _secret_box(request))
 
     return templates.TemplateResponse(
         request=request,
@@ -470,6 +490,7 @@ def dashboard(
             "calendar_saved": request.query_params.get("calendar_saved"),
             "calendar_subscribed": request.query_params.get("calendar_subscribed"),
             "calendar_error": request.query_params.get("calendar_error"),
+            "secret_key_configured": _secret_box(request).has_key,
         },
     )
 
@@ -477,6 +498,12 @@ def dashboard(
 # ---------------------------------------------------------------------------
 # Calendar connect flow (ADR 0014)
 # ---------------------------------------------------------------------------
+
+
+def _secret_box(request: Request) -> SecretBox:
+    """The instance's box for stored calendar secrets, built at startup (ADR 0019)."""
+    box: SecretBox = request.app.state.secret_box
+    return box
 
 
 def _google_callback_url(settings: Settings) -> str:
@@ -501,6 +528,7 @@ def calendar_connect(
                 resource_slug=resource_slug,
                 redirect_uri=_google_callback_url(settings),
                 signing_key=derive_login_key(settings.login),
+                box=_secret_box(request),
             )
     except calendar_connect_service.CalendarNotConfiguredError as exc:
         return RedirectResponse(
@@ -556,6 +584,7 @@ def calendar_connect_callback(
                 code=code,
                 redirect_uri=_google_callback_url(settings),
                 now=utcnow(),
+                box=_secret_box(request),
             )
     except (calendar_connect_service.CalendarNotConfiguredError, CalendarProviderError) as exc:
         return RedirectResponse(
@@ -620,6 +649,7 @@ async def calendar_oauth_client_save(
                 client_secret=_field("client_secret"),
                 calendar_id=_field("calendar_id"),
                 now=utcnow(),
+                box=_secret_box(request),
             )
     except calendar_connect_service.CalendarNotConfiguredError as exc:
         return _dashboard_error(str(exc))
@@ -677,6 +707,7 @@ async def calendar_feed_save(
                 url=url if isinstance(url, str) else "",
                 timezone=config.resource.timezone,
                 now=utcnow(),
+                box=_secret_box(request),
             )
     except calendar_connect_service.CalendarNotConfiguredError as exc:
         return _dashboard_error(str(exc))
@@ -718,8 +749,11 @@ async def _extract_login(request: Request) -> str:
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         data = await request.body()
-        payload = json.loads(data.decode("utf-8")) if data else {}
-        return str(payload.get("login", ""))
+        try:
+            payload = json.loads(data.decode("utf-8")) if data else {}
+        except ValueError:  # malformed JSON or bytes: a failed login, not a server error
+            return ""
+        return str(payload.get("login", "")) if isinstance(payload, dict) else ""
     body = (await request.body()).decode("utf-8", errors="replace")
     for part in body.split("&"):
         if part.startswith("login="):
@@ -794,7 +828,9 @@ def _dashboard_error(message: str) -> RedirectResponse:
     )
 
 
-def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict[str, object]]:
+def _load_calendar_status(
+    session: Session, config: OperatorConfig, box: SecretBox
+) -> list[dict[str, object]]:
     """One row per resource, whether or not it has a ``[calendars.<slug>]`` entry.
 
     A resource with no entry gets a ``configured = False`` row so the dashboard can show
@@ -806,19 +842,25 @@ def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict
     ``connectable`` distinguishes Google (has a connect button) from Microsoft (out-of-band
     only, per ADR 0014's scope) so the template can render the right action without
     guessing from the provider name itself.
+
+    ``unreadable`` marks a resource whose dashboard-stored credentials exist but cannot be
+    decrypted (no ``CALON_SECRET_KEY``, or the wrong one, ADR 0019): it runs without a
+    calendar, and the operator can remove the stored credentials and set it up again.
     """
     clients = {row.resource_slug: row for row in session.query(CalendarOAuthClientRow).all()}
     feeds = {row.resource_slug: row for row in session.query(CalendarFeedRow).all()}
     rows: list[dict[str, object]] = []
     for slug in sorted({config.resource.slug} | set(config.calendars) | set(clients) | set(feeds)):
-        cfg = calendar_connect_service.resolve_calendar_config(session, config, slug)
+        cfg = calendar_connect_service.resolve_calendar_config(session, config, slug, box)
         if cfg is None:
+            stored = "dashboard" if slug in clients else ("feed" if slug in feeds else None)
             rows.append(
                 {
                     "resource_slug": slug,
                     "provider": None,
                     "configured": False,
-                    "source": None,
+                    "unreadable": stored is not None,
+                    "source": stored,
                     "calendar_id": None,
                     "connectable": False,
                     "connected": False,
@@ -836,6 +878,7 @@ def _load_calendar_status(session: Session, config: OperatorConfig) -> list[dict
                 "resource_slug": slug,
                 "provider": cfg.provider,
                 "configured": True,
+                "unreadable": False,
                 # Which source the credentials came from, so the row can offer the right
                 # action: only a dashboard-entered client can be edited or forgotten from
                 # the dashboard (ADR 0016 — the TOML is never written by calon).
