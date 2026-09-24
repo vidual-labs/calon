@@ -40,6 +40,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from calon import __version__
 from calon.api.deps import (
     AuthorisedOperator,
     CalendarRegistryDep,
@@ -491,6 +492,7 @@ def dashboard(
             "calendar_subscribed": request.query_params.get("calendar_subscribed"),
             "calendar_error": request.query_params.get("calendar_error"),
             "secret_key_configured": _secret_box(request).has_key,
+            "version": __version__,
         },
     )
 

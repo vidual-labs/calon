@@ -19,6 +19,7 @@
     header nav a.current { color:var(--fg); font-weight:600; }
     header nav .sep { margin-left:16px; padding-left:16px; border-left:1px solid var(--border); }
     main { padding:28px; max-width:960px; margin:0 auto; }
+    footer { padding:0 28px 28px; max-width:960px; margin:0 auto; color:var(--muted); font-size:12px; }
     h2 { font-size:16px; font-weight:600; margin:0 0 16px; }
     table { width:100%; border-collapse:collapse; }
     th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em;
@@ -386,5 +387,6 @@ client_secret = "..."</pre>
       <div class="empty">No bookings yet. Once someone books through the API, it will show up here.</div>
     {% endif %}
   </main>
+  <footer>calon v{{ version }}</footer>
 </body>
 </html>
