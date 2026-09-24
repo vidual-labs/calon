@@ -161,6 +161,17 @@ def test_valid_openflow_request_is_accepted(boot_with_openflow: TestClient) -> N
     assert data["booking"]["status"] == "confirmed"
 
 
+def test_a_date_timeslot_answer_is_accepted(boot_with_openflow: TestClient) -> None:
+    # The exact text OpenFlow's Date & Timeslot field submits when its slots come from
+    # calon: "YYYY-MM-DD HH:MM <IANA zone>". It used to be rejected with a 400.
+    body = json.dumps(_payload(start="2026-09-01 10:00 Europe/Berlin")).encode("utf-8")
+    r = boot_with_openflow.post("/api/v1/openflow", content=body, headers=_signed_headers(body))
+    assert r.status_code == 201, r.text
+    data = r.json()
+    assert data["decision"]["code"] == "ACCEPTED"
+    assert data["booking"]["start"] == "2026-09-01T10:00:00+02:00"
+
+
 def test_openflow_booking_is_written_to_the_database(
     boot_with_openflow: TestClient,
     database: Database,

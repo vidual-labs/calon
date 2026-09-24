@@ -400,9 +400,25 @@ def _local_instant(raw: str, tz: ZoneInfo) -> datetime:
     would instead reinterpret it from whatever zone the *server process* happens to
     be running in. An answer that already carries its own offset is honoured as
     written and only re-expressed in ``tz`` for display.
+
+    OpenFlow's *Date & Timeslot* field stores its answer as plain text,
+    ``"2026-09-02 09:30"``, or with a trailing IANA zone when the slot came from calon's
+    own availability read: ``"2026-09-02 09:30 Europe/Berlin"``. That trailing zone is
+    what the wall-clock time is in, so a naive answer carrying one is read in *that*
+    zone rather than ``tz``, then re-expressed in ``tz`` like any other aware answer.
     """
-    parsed = datetime.fromisoformat(raw)
-    return parsed.replace(tzinfo=tz) if parsed.tzinfo is None else parsed.astimezone(tz)
+    text = raw.strip()
+    answer_tz = tz
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        head, sep, tail = text.rpartition(" ")
+        if not sep:
+            raise
+        parsed, answer_tz = datetime.fromisoformat(head), ZoneInfo(tail)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=answer_tz)
+    return parsed.astimezone(tz)
 
 
 def _hget(headers: Mapping[str, str], name: str) -> str | None:
