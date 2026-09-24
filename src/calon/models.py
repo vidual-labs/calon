@@ -263,10 +263,10 @@ class CalendarCredentialRow(Base):
     this table's token over the TOML's when both are present, since this one reflects the
     provider's own token rotation.
 
-    No column-level encryption (see ADR 0014, Decision): the refresh token is a secret at
-    the same trust level as ``client_secret`` already stored in plaintext in
-    ``config/calon.toml``, and as the requester PII already stored in plaintext in
-    ``booking_intent`` — calon has one trust boundary, the operator's own host.
+    ``refresh_token`` is stored sealed by :class:`calon.security.secretbox.SecretBox`
+    (ADR 0019, superseding ADR 0014's "no encryption at rest"): ``enc:v1:<token>``. A value
+    without that prefix is plain text from before encryption, and is sealed at the next
+    start once ``CALON_SECRET_KEY`` is set.
     """
 
     __tablename__ = "calendar_credential"
@@ -294,11 +294,8 @@ class CalendarOAuthClientRow(Base):
     dashboard flow later without a schema change; ``"google"`` is the only value the
     connect flow writes today (ADR 0014's scope).
 
-    No column-level encryption, for the same reason ``calendar_credential`` has none (ADR
-    0014): this secret sits at the same trust level as the refresh token beside it and the
-    ``client_secret`` an operator would otherwise have put in ``config/calon.toml`` in
-    plaintext. calon has one trust boundary, the operator's own host, and ``calon.db`` is
-    inside it.
+    ``client_secret`` is stored sealed, like ``calendar_credential.refresh_token`` (ADR
+    0019). ``client_id`` is not a secret and stays readable.
     """
 
     __tablename__ = "calendar_oauth_client"
@@ -321,8 +318,8 @@ class CalendarFeedRow(Base):
     credential. Read-only by nature: calon reads busy time from it and never writes.
 
     The URL is a secret in the same sense a refresh token is (anyone holding it can read
-    the calendar), so it lives under the same care as the rest of ``calon.db`` and is
-    never echoed into a log line or an error message.
+    the calendar), so it is stored sealed like one (ADR 0019) and is never echoed into a
+    log line or an error message.
     """
 
     __tablename__ = "calendar_feed"

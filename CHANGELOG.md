@@ -12,6 +12,15 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- **Calendar credentials are now stored encrypted.** Set `CALON_SECRET_KEY` (generate it
+  with `openssl rand -base64 32`) and calon encrypts the Google refresh tokens, OAuth
+  client secrets and feed addresses it keeps in `calon.db`, so a backup or copy of the
+  database no longer gives away your calendars. Credentials already stored are encrypted
+  at the first start with a key, with no reconnecting. Keep the key apart from your
+  backups. To change it, move the old key to `CALON_SECRET_KEY_PREVIOUS` for one restart.
+  Bookings are not encrypted and never depend on the key: if it is lost, only the calendar
+  connections need setting up again.
+
 - **The booking page now shows what is actually free.** `/book` opens on a month
   calendar with the bookable days lit up, the times for the day you pick beside it (12h or
   24h, your choice), and the details form after that — instead of a blank date and time
@@ -77,6 +86,12 @@ per user-visible change, describing the effect rather than the implementation.
   a failed connect) is visible in the dashboard instead of only in `docs/self-hosting.md`.
 
 ### Changed
+
+- **BREAKING:** the Calendars panel now refuses to store calendar credentials (an OAuth
+  client, a Google connection, or a feed address) until `CALON_SECRET_KEY` is set, and
+  says so. Calendars you already connected keep working after the upgrade; set the key
+  before you change or add one. Calendars configured in `config/calon.toml` are not
+  affected.
 
 - **BREAKING:** the operator dashboard moved from `/bookings` to `/admin`. The page and
   its login are unchanged — only the address is. Update your bookmark, and any reverse

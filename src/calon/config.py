@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     api_key: str | None = None
     #: How long an operator web session lives before it requires re-login.
     session_ttl_hours: int = 12
+    #: Encrypts the calendar secrets stored in ``calon.db`` (ADR 0019). Set via
+    #: ``CALON_SECRET_KEY``: 32 random bytes, base64-encoded (``openssl rand -base64 32``).
+    #: Optional for booking; required before the dashboard will store a calendar secret.
+    secret_key: str | None = None
+    #: The key being rotated out (``CALON_SECRET_KEY_PREVIOUS``). Values sealed with it stay
+    #: readable and are re-encrypted under :attr:`secret_key` at startup.
+    secret_key_previous: str | None = None
 
     @field_validator("config_path", mode="before")
     @classmethod

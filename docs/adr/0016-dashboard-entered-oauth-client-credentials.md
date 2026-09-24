@@ -1,6 +1,7 @@
 # 16. OAuth app credentials may be entered in the dashboard, stored in SQLite
 
-- **Status:** Accepted
+- **Status:** Accepted; its "No column-level encryption" paragraph is superseded by
+  [ADR 0019](0019-encrypt-stored-calendar-secrets.md)
 - **Date:** 2026-08-27
 - **Extends:** [ADR 0014](0014-operator-initiated-google-connect-flow.md), which moved the
   *refresh token* out of `config/calon.toml` and into calon's own OAuth exchange. This ADR

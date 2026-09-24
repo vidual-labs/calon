@@ -15,7 +15,6 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-import sqlalchemy as sa
 from fastapi import FastAPI
 
 import calon.intake.external as intake_external
@@ -27,8 +26,8 @@ from calon.config import OperatorConfig, Settings, load_operator_config
 from calon.db import Database, restrict_to_owner
 from calon.intake.external import SourceRegistry
 from calon.migrate import upgrade_to_head
-from calon.models import CalendarCredentialRow
 from calon.security import LoginStore
+from calon.security.secretbox import SecretBox
 from calon.services import calendar_connect_service
 from calon.services.provisioning import sync_operator_config
 from calon.web import install_error_handlers
@@ -58,6 +57,11 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
     """
     resolved_settings = settings or Settings()
     resolved_config = config or load_operator_config(resolved_settings.config_path)
+    # A malformed key is a configuration error, reported now like a bad config file,
+    # rather than the first time a calendar secret is read (ADR 0019).
+    secret_box = SecretBox(
+        resolved_settings.secret_key, previous_key=resolved_settings.secret_key_previous
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -80,13 +84,17 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
                 resource.timezone,
                 len(resolved_config.blackouts),
             )
+            # With a key set, encrypt any calendar secret still stored in plain text or
+            # under the previous key, before anything reads them (ADR 0019).
+            resealed = calendar_connect_service.reseal_secrets(session, secret_box)
+            if resealed:
+                logger.info("calon secrets: %d stored value(s) encrypted", resealed)
             # Resources connected through the operator dashboard's "Connect with Google"
             # button (ADR 0014) have their refresh token here; it takes precedence over
             # the TOML's, which is only a bootstrap seed once a real connection exists.
-            connected_refresh_tokens = {
-                row.resource_slug: row.refresh_token
-                for row in session.scalars(sa.select(CalendarCredentialRow))
-            }
+            connected_refresh_tokens = calendar_connect_service.connected_refresh_tokens(
+                session, secret_box
+            )
             # ADR 0016 / 0017: a resource set up through the dashboard — an OAuth client
             # that has been authorized, or a subscribed ICS feed — is configured here too,
             # so it survives a restart. The TOML still wins where it has an entry. An
@@ -96,7 +104,7 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
             calendar_configs = {
                 slug: cfg
                 for slug, cfg in calendar_connect_service.configured_calendars(
-                    session, resolved_config
+                    session, resolved_config, secret_box
                 ).items()
                 if slug in resolved_config.calendars
                 or slug in connected_refresh_tokens
@@ -104,6 +112,7 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
             }
 
         app.state.db = database
+        app.state.secret_box = secret_box
         app.state.settings = resolved_settings
         app.state.config = resolved_config
 

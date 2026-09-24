@@ -177,11 +177,39 @@ firewall; do not publish port 8000 to the internet.
 ### The database file holds secrets
 
 `calon.db` holds requesters' personal data and, once you set up calendar sync through the
-dashboard, the refresh tokens, OAuth client secrets and feed addresses too — in plain text
-(ADR 0014, ADR 0016). calon therefore creates it, and its `-wal` and `-shm` files, readable
-and writable by the account running calon only (mode `0600`), and tightens an existing
-database to that mode at every start. Anyone who can read the file, or a backup of it, can
-read your calendars; keep backups just as private.
+dashboard, the refresh tokens, OAuth client secrets and feed addresses too. calon therefore
+creates it, and its `-wal` and `-shm` files, readable and writable by the account running
+calon only (mode `0600`), and tightens an existing database to that mode at every start.
+Keep backups just as private.
+
+### The encryption key for calendar credentials
+
+The calendar credentials in `calon.db` are stored **encrypted** with `CALON_SECRET_KEY`
+(ADR 0019), so a backup or copy of the database does not give away your calendars. Booking
+data is not encrypted: calon needs it to work, and a lost key must never lose bookings.
+
+```bash
+openssl rand -base64 32    # put the output in .env as CALON_SECRET_KEY=...
+```
+
+- **Needed before the dashboard stores anything calendar-related.** Without it, the
+  Calendars panel explains how to set one, and saving an OAuth client, connecting Google,
+  or subscribing to a feed is refused. Booking, availability, and calendars set up in
+  `config/calon.toml` need no key.
+- **Upgrading from a version without encryption:** calendars you already connected keep
+  working without a key. Once you set one and restart, calon encrypts what is already
+  stored — no reconnecting.
+- **Keep the key apart from your backups.** A backup and its key together are as readable
+  as no encryption at all. Store the key in a password manager or wherever `.env` itself
+  is kept safe.
+- **If the key is lost or wrong,** calon still starts and takes bookings; the affected
+  calendars run on calon's own availability, and the panel marks their credentials as
+  unreadable. Nothing is overwritten: set the right key and restart, or remove the
+  credentials and set the calendar up again.
+- **Rotating the key:** move the current key to `CALON_SECRET_KEY_PREVIOUS`, put a new one
+  in `CALON_SECRET_KEY`, and restart. calon re-encrypts everything under the new key at
+  startup; then remove `CALON_SECRET_KEY_PREVIOUS` and restart again.
+- A key that is not 32 bytes of base64 stops startup with an error naming the setting.
 
 ## Resource calendar sync
 
@@ -335,10 +363,10 @@ control (the example file is a template only), and restrict file permissions on 
 production host. For a resource set up through the dashboard instead,
 the refresh token lives in `calon.db`'s `calendar_credential` table (ADR 0014), and — if
 you entered the OAuth client there rather than in the config file — the `client_id` and
-`client_secret` live in its `calendar_oauth_client` table (ADR 0016). calon keeps that file
-owner-only (see [The database file holds secrets](#the-database-file-holds-secrets)); give
-your backups of it the same care as `config/calon.toml`, since it is also a secrets file,
-not just application data. Either way, the token is held in memory for the running
+`client_secret` live in its `calendar_oauth_client` table (ADR 0016), encrypted with
+`CALON_SECRET_KEY` (see
+[The encryption key for calendar credentials](#the-encryption-key-for-calendar-credentials)).
+calon also keeps that file owner-only. Either way, the token is held in memory for the running
 process's lifetime; if the provider rotates it *during that process's uptime*, the
 rotation is adopted in memory only and is not written back to the TOML or the database
 (unchanged from ADR 0013 — still an open question, not something the Connect button

@@ -34,6 +34,8 @@ dependencies = [
   "python-dateutil>=2.9",
   # Guarantees the IANA timezone database exists inside slim containers.
   "tzdata>=2024.1",
+  # Encrypts calendar secrets stored in calon.db when CALON_SECRET_KEY is set (ADR 0019).
+  "cryptography>=43",
 ]
 
 [project.urls]

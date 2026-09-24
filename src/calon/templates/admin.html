@@ -216,6 +216,16 @@
         Google OAuth redirect URI &mdash; register this exact URL as an authorized redirect
         URI on the OAuth client: <span class="mono">{{ google_callback_url }}</span>
       </p>
+      {% if not secret_key_configured %}
+        <div class="flash err">
+          calon stores calendar credentials encrypted, so connecting a calendar or
+          subscribing to a feed here needs an encryption key. Generate one with
+          <span class="mono">openssl rand -base64 32</span>, set it as
+          <span class="mono">CALON_SECRET_KEY</span> in <span class="mono">.env</span>, and
+          restart calon. Keep a copy of the key apart from your database backups.
+          Calendars set up in <span class="mono">config/calon.toml</span> are not affected.
+        </div>
+      {% endif %}
       {% for cal in calendars %}
         <div class="cal-row">
           <div>
@@ -229,6 +239,8 @@
               <span class="status confirmed">Connected</span>
             {% elif cal.configured %}
               <span class="status none">Not connected</span>
+            {% elif cal.unreadable %}
+              <span class="status none">Credentials unreadable &mdash; check CALON_SECRET_KEY</span>
             {% else %}
               <span class="status none">Not configured</span>
             {% endif %}
@@ -249,15 +261,16 @@
               <form method="post" action="/calendars/{{ cal.resource_slug }}/disconnect" style="display:inline">
                 <button type="submit" class="btn secondary">Disconnect</button>
               </form>
-            {% elif cal.connectable %}
+            {% elif cal.connectable and secret_key_configured %}
               <a class="btn" href="/calendars/{{ cal.resource_slug }}/connect">Connect with Google</a>
-            {% elif cal.configured %}
+            {% elif cal.configured and cal.source == "config" %}
               <span class="mono">set up via config/calon.toml</span>
             {% endif %}
           </div>
         </div>
-        {% if not cal.configured %}
+        {% if not cal.configured and not cal.unreadable %}
           <div class="setup">
+            {% if secret_key_configured %}
             <ol class="steps">
               <li>In Google Cloud Console, enable the <strong>Calendar API</strong> and create an
                 OAuth client of type <em>Web application</em>, with
@@ -301,6 +314,7 @@
                      placeholder="https://calendar.google.com/calendar/ical/.../basic.ics">
               <button type="submit" class="btn secondary">Subscribe to this feed</button>
             </form>
+            {% endif %}
             <details>
               <summary style="margin-top:14px">Prefer the config file?</summary>
               <p class="hint" style="margin-top:10px">

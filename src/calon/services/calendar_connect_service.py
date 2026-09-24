@@ -21,10 +21,16 @@ Registering the OAuth app with the provider remains a one-time developer-console
 no self-hosted instance can automate; what both paths remove is the manual refresh-token
 copy-paste, and what the second removes on top of that is the need to edit a file on the
 host at all.
+
+Every calendar secret this module writes to the database — the refresh token, a
+dashboard-entered client secret, a feed address — is sealed with the instance's
+:class:`~calon.security.secretbox.SecretBox` first (ADR 0019), and storing one without a
+``CALON_SECRET_KEY`` is refused. Reading tolerates values written before encryption.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -38,15 +44,18 @@ from calon.calendars.oauth import OAuthCredentials, exchange_authorization_code
 from calon.config import CalendarProviderConfig, OperatorConfig
 from calon.models import CalendarCredentialRow, CalendarFeedRow, CalendarOAuthClientRow
 from calon.security import new_oauth_state
+from calon.security.secretbox import SecretBox, SecretUnreadableError
 
 __all__ = [
     "CalendarNotConfiguredError",
     "ConnectResult",
     "complete_connect",
     "configured_calendars",
+    "connected_refresh_tokens",
     "disconnect",
     "forget_feed",
     "forget_oauth_client",
+    "reseal_secrets",
     "resolve_calendar_config",
     "save_feed",
     "save_oauth_client",
@@ -56,6 +65,8 @@ __all__ = [
 #: The only provider the dashboard connect flow supports today (ADR 0014). The storage is
 #: provider-keyed so Microsoft 365 can join it later without a schema change.
 DASHBOARD_PROVIDERS = frozenset({"google"})
+
+logger = logging.getLogger(__name__)
 
 
 class CalendarNotConfiguredError(ValueError):
@@ -70,7 +81,7 @@ class CalendarNotConfiguredError(ValueError):
 
 
 def resolve_calendar_config(
-    session: Session, config: OperatorConfig, resource_slug: str
+    session: Session, config: OperatorConfig, resource_slug: str, box: SecretBox
 ) -> CalendarProviderConfig | None:
     """The calendar configuration in force for a resource, from either source (ADR 0016).
 
@@ -78,64 +89,136 @@ def resolve_calendar_config(
     operator edited is never silently overridden by a row in a database. Only where the
     TOML is silent does the dashboard-entered OAuth client apply. ``None`` means the
     resource has no calendar at all, which is the standalone default (``CLAUDE.md`` §2).
+    So does a dashboard-stored secret that cannot be decrypted (no key, or the wrong
+    one): the resource degrades to calon-only availability rather than failing.
     """
     from_toml = config.calendars.get(resource_slug)
     if from_toml is not None:
         return from_toml
-    client_row = session.get(CalendarOAuthClientRow, resource_slug)
-    if client_row is not None:
-        return _client_config(client_row, timezone=config.resource.timezone)
-    feed_row = session.get(CalendarFeedRow, resource_slug)
-    if feed_row is not None:
-        return _feed_config(feed_row, timezone=config.resource.timezone)
+    try:
+        client_row = session.get(CalendarOAuthClientRow, resource_slug)
+        if client_row is not None:
+            return _client_config(client_row, timezone=config.resource.timezone, box=box)
+        feed_row = session.get(CalendarFeedRow, resource_slug)
+        if feed_row is not None:
+            return _feed_config(feed_row, timezone=config.resource.timezone, box=box)
+    except SecretUnreadableError as exc:
+        _log_unreadable(resource_slug, exc)
     return None
 
 
-def _client_config(row: CalendarOAuthClientRow, *, timezone: str) -> CalendarProviderConfig:
+def _log_unreadable(resource_slug: str, exc: SecretUnreadableError) -> None:
+    logger.warning(
+        "calendar credentials for %r cannot be read (%s); the resource runs on calon's "
+        "own availability until the key is fixed or the calendar is set up again",
+        resource_slug,
+        exc,
+    )
+
+
+def _client_config(
+    row: CalendarOAuthClientRow, *, timezone: str, box: SecretBox
+) -> CalendarProviderConfig:
     return CalendarProviderConfig(
         slug=row.resource_slug,
         provider=row.provider,
         calendar_id=row.calendar_id,
         enabled=True,
         client_id=row.client_id,
-        client_secret=row.client_secret,
+        client_secret=box.unseal(row.client_secret),
         timezone=timezone,
     )
 
 
-def _feed_config(row: CalendarFeedRow, *, timezone: str) -> CalendarProviderConfig:
+def _feed_config(row: CalendarFeedRow, *, timezone: str, box: SecretBox) -> CalendarProviderConfig:
     return CalendarProviderConfig(
         slug=row.resource_slug,
         provider="ics",
         calendar_id="",
         enabled=True,
-        feed_url=row.url,
+        feed_url=box.unseal(row.url),
         timezone=timezone,
     )
 
 
 def configured_calendars(
-    session: Session, config: OperatorConfig
+    session: Session, config: OperatorConfig, box: SecretBox
 ) -> dict[str, CalendarProviderConfig]:
     """Every resource with a calendar configured, from both sources, TOML winning.
 
     Used at boot to build the provider registry, so a resource connected through the
-    dashboard keeps working across a restart.
+    dashboard keeps working across a restart. A resource whose stored secret cannot be
+    decrypted is left out (and logged), exactly like one with no calendar.
     """
     timezone = config.resource.timezone
     resolved: dict[str, CalendarProviderConfig] = {}
     for feed in session.query(CalendarFeedRow).all():
-        resolved[feed.resource_slug] = _feed_config(feed, timezone=timezone)
+        try:
+            resolved[feed.resource_slug] = _feed_config(feed, timezone=timezone, box=box)
+        except SecretUnreadableError as exc:
+            _log_unreadable(feed.resource_slug, exc)
     for client in session.query(CalendarOAuthClientRow).all():
-        resolved[client.resource_slug] = _client_config(client, timezone=timezone)
+        try:
+            resolved[client.resource_slug] = _client_config(client, timezone=timezone, box=box)
+        except SecretUnreadableError as exc:
+            _log_unreadable(client.resource_slug, exc)
     resolved.update(config.calendars)
     return resolved
 
 
+def connected_refresh_tokens(session: Session, box: SecretBox) -> dict[str, str]:
+    """The refresh token of every resource connected through the dashboard (ADR 0014).
+
+    A token that cannot be decrypted is left out (and logged): that resource then has no
+    grant, which is the standalone default, not a boot failure.
+    """
+    tokens: dict[str, str] = {}
+    for row in session.query(CalendarCredentialRow).all():
+        try:
+            tokens[row.resource_slug] = box.unseal(row.refresh_token)
+        except SecretUnreadableError as exc:
+            _log_unreadable(row.resource_slug, exc)
+    return tokens
+
+
+def reseal_secrets(session: Session, box: SecretBox) -> int:
+    """Encrypt every stored secret that is not yet sealed under the current key (ADR 0019).
+
+    Run at startup. Turns plain-text values written before a key was set, and values
+    sealed with ``CALON_SECRET_KEY_PREVIOUS``, into values sealed with
+    ``CALON_SECRET_KEY``. A value no configured key can open is left untouched. Returns
+    how many values were rewritten; ``0`` when there is no key.
+    """
+    rewritten = 0
+    for row in session.query(CalendarCredentialRow).all():
+        if box.needs_reseal(row.refresh_token):
+            row.refresh_token = box.seal(box.unseal(row.refresh_token))
+            rewritten += 1
+    for client in session.query(CalendarOAuthClientRow).all():
+        if box.needs_reseal(client.client_secret):
+            client.client_secret = box.seal(box.unseal(client.client_secret))
+            rewritten += 1
+    for feed in session.query(CalendarFeedRow).all():
+        if box.needs_reseal(feed.url):
+            feed.url = box.seal(box.unseal(feed.url))
+            rewritten += 1
+    return rewritten
+
+
+def _require_key(box: SecretBox) -> None:
+    """Refuse up front, with the operator-facing reason, when nothing can be stored."""
+    if not box.has_key:
+        raise CalendarNotConfiguredError(
+            "storing calendar credentials in calon requires CALON_SECRET_KEY; generate one "
+            "with `openssl rand -base64 32`, add it to .env, and restart calon"
+        )
+
+
 def _connectable_config(
-    session: Session, config: OperatorConfig, resource_slug: str
+    session: Session, config: OperatorConfig, resource_slug: str, box: SecretBox
 ) -> CalendarProviderConfig:
-    cfg = resolve_calendar_config(session, config, resource_slug)
+    _require_key(box)  # the connect flow ends by storing a refresh token
+    cfg = resolve_calendar_config(session, config, resource_slug, box)
     if cfg is None:
         raise CalendarNotConfiguredError(
             f"{resource_slug} has no calendar configured yet; enter the Google OAuth "
@@ -164,6 +247,7 @@ def save_oauth_client(
     client_secret: str,
     calendar_id: str,
     now: datetime,
+    box: SecretBox,
     provider: str = "google",
 ) -> None:
     """Store the OAuth app credentials an operator entered in the dashboard (ADR 0016).
@@ -173,7 +257,10 @@ def save_oauth_client(
     resource whose credentials are already in ``config/calon.toml`` cannot be configured
     this way — the caller checks that first, since the TOML would win anyway and a form
     that silently did nothing would be worse than a refusal.
+
+    The client secret is stored sealed; without a ``CALON_SECRET_KEY`` nothing is stored.
     """
+    _require_key(box)
     if provider not in DASHBOARD_PROVIDERS:
         raise CalendarNotConfiguredError(
             f"the dashboard connect flow supports Google only; {provider!r} is set up "
@@ -208,7 +295,7 @@ def save_oauth_client(
                 provider=provider,
                 calendar_id=calendar_id,
                 client_id=client_id,
-                client_secret=client_secret,
+                client_secret=box.seal(client_secret),
                 created_at_utc=now,
                 updated_at_utc=now,
             )
@@ -217,7 +304,7 @@ def save_oauth_client(
     row.provider = provider
     row.calendar_id = calendar_id
     row.client_id = client_id
-    row.client_secret = client_secret
+    row.client_secret = box.seal(client_secret)
     row.updated_at_utc = now
 
 
@@ -249,14 +336,16 @@ def save_feed(
     url: str,
     timezone: str,
     now: datetime,
+    box: SecretBox,
 ) -> None:
     """Subscribe a resource to a published ICS calendar URL (ADR 0017).
 
     Unlike an OAuth client, a feed is usable the moment it is stored — the URL *is* the
     credential — so the provider goes live here rather than after a consent round trip.
     A resource already set up for OAuth is refused: one calendar per resource, and the
-    operator decides which by removing the other.
+    operator decides which by removing the other. The address is stored sealed.
     """
+    _require_key(box)
     url = url.strip()
     if not url.startswith(("http://", "https://")):
         raise CalendarNotConfiguredError(
@@ -274,13 +363,13 @@ def save_feed(
         session.add(
             CalendarFeedRow(
                 resource_slug=resource_slug,
-                url=url,
+                url=box.seal(url),
                 created_at_utc=now,
                 updated_at_utc=now,
             )
         )
     else:
-        row.url = url
+        row.url = box.seal(url)
         row.updated_at_utc = now
 
     calendar_registry.set_provider(
@@ -311,6 +400,7 @@ def start_connect(
     resource_slug: str,
     redirect_uri: str,
     signing_key: bytes,
+    box: SecretBox,
 ) -> str:
     """The consent-screen URL to send the operator's browser to.
 
@@ -318,7 +408,7 @@ def start_connect(
     ready, from either source — the caller (the web route) turns that into a readable
     error for the operator rather than an OAuth redirect to nowhere.
     """
-    cfg = _connectable_config(session, config, resource_slug)
+    cfg = _connectable_config(session, config, resource_slug, box)
     state = new_oauth_state(signing_key, resource_slug)
     return build_authorize_url(client_id=cfg.client_id, redirect_uri=redirect_uri, state=state)
 
@@ -338,6 +428,7 @@ def complete_connect(
     code: str,
     redirect_uri: str,
     now: datetime,
+    box: SecretBox,
     client: httpx.Client | None = None,
 ) -> ConnectResult:
     """Exchange the authorization code, persist the credential, and go live immediately.
@@ -347,7 +438,7 @@ def complete_connect(
     :class:`~calon.calendars.CalendarProviderError` (the token exchange itself failed) —
     the caller shows either as a readable error and leaves any prior connection untouched.
     """
-    cfg = _connectable_config(session, config, resource_slug)
+    cfg = _connectable_config(session, config, resource_slug, box)
     credentials = OAuthCredentials(client_id=cfg.client_id, client_secret=cfg.client_secret)
 
     owns_client = client is None
@@ -370,14 +461,14 @@ def complete_connect(
             CalendarCredentialRow(
                 resource_slug=resource_slug,
                 provider="google",
-                refresh_token=refresh_token,
+                refresh_token=box.seal(refresh_token),
                 connected_at_utc=now,
                 updated_at_utc=now,
             )
         )
     else:
         row.provider = "google"
-        row.refresh_token = refresh_token
+        row.refresh_token = box.seal(refresh_token)
         row.updated_at_utc = now
 
     calendar_registry.set_provider(

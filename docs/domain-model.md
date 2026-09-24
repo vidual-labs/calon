@@ -294,8 +294,16 @@ button (ADR 0014).
 `CalendarProviderRegistry` already key everything by slug rather than by row id. A resource
 that only uses the out-of-band/TOML refresh token (ADR 0013) has no row here at all; when
 both a TOML value and a row here exist, the row wins (it reflects the provider's own token
-rotation, the TOML value does not). No column-level encryption — see ADR 0014's Decision
-for why, and treat `calon.db` with the same file-permission care as `config/calon.toml`.
+rotation, the TOML value does not). `refresh_token` is stored encrypted (ADR 0019).
+
+**Encrypted secret columns** (`calendar_credential.refresh_token`,
+`calendar_oauth_client.client_secret`, `calendar_feed.url`): each value is stored as
+`enc:v1:<Fernet token>`, sealed with `CALON_SECRET_KEY`. Nothing is written to these
+columns without a key. A value without the `enc:v1:` prefix is plain text from before
+ADR 0019; calon still reads it, and encrypts it at the next start once a key is set. At
+the same start, values sealed with `CALON_SECRET_KEY_PREVIOUS` are re-encrypted under the
+current key. A value no configured key can decrypt is left untouched, and its resource
+runs without a calendar until the right key is back.
 
 ### `calendar_oauth_client`
 
@@ -309,8 +317,8 @@ Distinct from `calendar_credential` above: that one holds the per-resource *gran
 refresh token), this one the *application* the grant was issued to. A `[calendars.<slug>]`
 entry in `config/calon.toml` always wins over a row here; calon never writes the TOML.
 `provider` is stored rather than assumed so Microsoft 365 can join the dashboard flow later
-without a schema change. No column-level encryption, for the reason ADR 0014 gives for the
-refresh token beside it.
+without a schema change. `client_secret` is stored encrypted (ADR 0019); `client_id` is
+not a secret and is stored as is.
 
 ### `calendar_feed`
 
@@ -323,7 +331,7 @@ provider live immediately with no grant to obtain. Read-only — calon reads fre
 the feed and never writes to it, and `CalendarProviderRegistry.writes_back()` reports
 `False` for such a resource so the write-back skips it rather than recording a failure. A
 resource has either a `calendar_feed` row or a `calendar_oauth_client` row, never both; the
-TOML still wins over either.
+TOML still wins over either. `url` is stored encrypted (ADR 0019).
 
 ## Concurrency
 

@@ -1,6 +1,7 @@
 # 17. A subscribed ICS feed as a second, OAuth-free way to read a resource's busy time
 
-- **Status:** Accepted
+- **Status:** Accepted; the feed address is stored encrypted since
+  [ADR 0019](0019-encrypt-stored-calendar-secrets.md)
 - **Date:** 2026-08-27
 - **Extends:** [ADR 0009](0009-optional-resource-calendar-sync.md) (the provider contract),
   [ADR 0014](0014-operator-initiated-google-connect-flow.md) and
