@@ -147,6 +147,13 @@ carries the canonical `X-Calon-*` headers is verified by that scheme instead (ca
 takes precedence), so an OpenFlow caller can opt into the stronger, headered scheme at
 any time. The adapter translates only: it never accepts, rejects, or books.
 
+The mapped `start`/`end` answers may be ISO-8601 (`2026-09-02T09:30:00+02:00`, or naive
+and read in the mapping's `timezone`) or the plain text OpenFlow's *Date & Timeslot* field
+submits: `2026-09-02 09:30`, optionally followed by an IANA zone
+(`2026-09-02 09:30 Europe/Berlin`, which the field adds when its slots came from calon's
+availability). A trailing zone is the zone that wall-clock time is in and takes precedence
+over the mapping's `timezone`.
+
 ## The other direction: reading availability
 
 Everything above is *inbound* — a source pushing a booking request in. A form builder like

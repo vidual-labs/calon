@@ -114,6 +114,10 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Fixed
 
+- Bookings from an OpenFlow **Date & Timeslot** field connected to calon were rejected
+  with a 400 and never booked. The field submits its answer as `2026-09-02 09:30
+  Europe/Berlin`, which the OpenFlow intake could not read; it now accepts that format,
+  with or without the trailing timezone.
 - A connected Google Calendar's free/busy check always came back empty, so calon
   could offer and accept a slot that was already booked on that calendar. The
   OAuth connect flow only ever requested the `calendar.events` scope, which

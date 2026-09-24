@@ -559,6 +559,36 @@ class TestParseEdgeCases:
         intent = adapter.parse(request)
         assert intent.start == datetime(2026, 9, 1, 11, 0, 0, tzinfo=UTC) + timedelta(hours=-5)
 
+    def test_a_date_timeslot_answer_with_its_zone_is_parsed(self) -> None:
+        # Regression: OpenFlow's Date & Timeslot field stores "YYYY-MM-DD HH:MM <IANA
+        # zone>" when its slots came from calon, which ``fromisoformat`` rejects — every
+        # such submission was a 400 and never became a booking.
+        adapter = _adapter()
+        request = _signed_shim_request(start="2026-09-01 11:00 Europe/Berlin")
+        intent = adapter.parse(request)
+        assert intent.start == datetime(2026, 9, 1, 11, 0, tzinfo=ZoneInfo(TZ))
+
+    def test_a_date_timeslot_answer_without_a_zone_uses_the_forms_zone(self) -> None:
+        adapter = _adapter()
+        request = _signed_shim_request(start="2026-09-01 11:00")
+        intent = adapter.parse(request)
+        assert intent.start == datetime(2026, 9, 1, 11, 0, tzinfo=ZoneInfo(TZ))
+
+    def test_a_date_timeslot_answer_is_read_in_its_own_zone(self) -> None:
+        # The trailing zone is what the wall-clock time is in; it wins over the form's
+        # configured zone, which only decides how the instant is re-expressed.
+        adapter = _adapter()
+        request = _signed_shim_request(start="2026-09-01 11:00 UTC")
+        intent = adapter.parse(request)
+        assert intent.start == datetime(2026, 9, 1, 11, 0, tzinfo=UTC)
+        assert intent.start.utcoffset() == timedelta(hours=2)  # shown in Europe/Berlin
+
+    def test_a_date_timeslot_answer_with_an_unknown_zone_is_a_parse_error(self) -> None:
+        adapter = _adapter()
+        request = _signed_shim_request(start="2026-09-01 11:00 Not/AZone")
+        with pytest.raises(IntakeParseError, match="could not be resolved"):
+            adapter.parse(request)
+
     def test_the_payload_timestamp_is_not_required(self) -> None:
         adapter = _adapter()
         payload = _form_payload()
