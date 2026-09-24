@@ -19,6 +19,7 @@ answering "what is free" never blocks anyone from booking.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -28,7 +29,7 @@ from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session, sessionmaker
 
-__all__ = ["Database", "create_db_engine"]
+__all__ = ["Database", "create_db_engine", "restrict_to_owner"]
 
 #: Execution option that upgrades a transaction from ``BEGIN`` to ``BEGIN IMMEDIATE``.
 _BEGIN_OPTION = "calon_begin"
@@ -36,6 +37,31 @@ _BEGIN_OPTION = "calon_begin"
 #: How long SQLite waits for a lock before giving up, in milliseconds. Requests queue
 #: behind each other rather than failing, which at this scale is what an operator wants.
 _BUSY_TIMEOUT_MS = 5_000
+
+
+#: The database holds calendar credentials (refresh tokens, OAuth client secrets, secret
+#: feed URLs) and requester personal data, so only the account running calon may read it.
+_DB_FILE_MODE = 0o600
+
+#: SQLite's companion files. In WAL mode the ``-wal`` file holds recent writes, secrets
+#: included, until the next checkpoint.
+_DB_COMPANION_SUFFIXES = ("-wal", "-shm", "-journal")
+
+
+def restrict_to_owner(db_path: Path) -> None:
+    """Make the database file owner-read/write only, creating it empty if it is missing.
+
+    SQLite would otherwise create the file under the process umask — typically ``0644``,
+    readable by every account on the host. Creating it here first, with ``0600``, closes
+    that window; SQLite then gives its ``-wal``/``-shm`` files the database file's own
+    mode. Existing files, from an instance that predates this, are tightened in place.
+    An empty file is a valid empty SQLite database, so migrations run on it unchanged.
+    """
+    fd = os.open(db_path, os.O_CREAT | os.O_RDWR, _DB_FILE_MODE)
+    os.close(fd)
+    for path in (db_path, *(db_path.with_name(db_path.name + s) for s in _DB_COMPANION_SUFFIXES)):
+        if path.exists():
+            path.chmod(_DB_FILE_MODE)
 
 
 def create_db_engine(url: str, *, echo: bool = False) -> Engine:

@@ -194,7 +194,29 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Security
 
-- _Nothing yet._
+- **`calon.db` is now readable by its owner only.** It holds your calendar refresh tokens,
+  OAuth client secrets and feed addresses as well as requesters' personal data, but was
+  created readable by every account on the host. calon now creates it (and its `-wal` and
+  `-shm` files) with mode `0600`, and tightens an existing database the next time it
+  starts — no action needed. Keep your backups equally private.
+- **Repeated wrong logins are now refused for a while.** After 10 failed attempts from one
+  address within 15 minutes, `/login` answers `429` until the oldest failure is 15
+  minutes old; a wrong `CALON_API_KEY` counts the same way. A login attempt no longer
+  holds up every other request while the key is checked. Behind a reverse proxy, set
+  `FORWARDED_ALLOW_IPS` to the proxy's address so each visitor is counted separately —
+  otherwise all visitors share one counter (see `docs/self-hosting.md`).
+- **`docker compose` now publishes calon on `127.0.0.1` only**, as its own comment always
+  said. It used to listen on every interface, so the login could reach the network
+  unencrypted, bypassing your TLS proxy. If you reached calon directly by the host's
+  address rather than through a proxy on the same host, put a proxy in front or change
+  the port mapping back deliberately.
+- A malformed `Authorization: Bearer` header, a malformed signature header on external
+  intake, or a malformed JSON login no longer causes a server error; each is refused like
+  any other wrong credential.
+- A subscribed calendar feed is now cut off once it passes the 5 MB limit, instead of
+  being downloaded in full first — a broken or hostile feed address can no longer make
+  calon buffer an unbounded response.
+
 ## [0.3.0] - 2026-08-19
 
 ### Added

@@ -181,7 +181,11 @@ def verify_signature(
     # ts_raw is non-None here: _parse_timestamp raised if the header was missing.
     expected = compute_signature(secret, ts_raw, body)
     expected_digest = expected.partition("=")[2]
-    if not hmac.compare_digest(supplied_digest.lower(), expected_digest):
+    # Compared as bytes: ``compare_digest`` raises on a non-ASCII ``str``, and a header
+    # carrying one must be a 401 like any other wrong signature, not a crash.
+    if not hmac.compare_digest(
+        supplied_digest.lower().encode("utf-8"), expected_digest.encode("ascii")
+    ):
         raise IntakeAuthError("signature does not match")
 
 

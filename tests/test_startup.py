@@ -7,6 +7,8 @@ promise in ``CLAUDE.md`` §2, taken literally.
 
 from __future__ import annotations
 
+import os
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -40,6 +42,36 @@ def test_the_first_run_creates_the_database_and_the_directory_holding_it(
         assert client.get("/healthz").json()["status"] == "ok"
 
     assert db_path.is_file()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_the_database_and_its_wal_are_readable_by_their_owner_only(
+    tmp_path: Path, frozen_clock: None
+) -> None:
+    """``calon.db`` holds calendar credentials, so it must not be world-readable."""
+    db_path = tmp_path / "calon.db"
+    with TestClient(create_app(Settings(db_path=db_path, config_path=None))) as client:
+        assert client.get("/healthz").status_code == 200
+        wal = tmp_path / "calon.db-wal"
+        assert wal.exists()
+        assert stat.S_IMODE(wal.stat().st_mode) == 0o600
+
+    assert stat.S_IMODE(db_path.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_an_existing_world_readable_database_is_tightened_at_startup(
+    tmp_path: Path, frozen_clock: None
+) -> None:
+    db_path = tmp_path / "calon.db"
+    with TestClient(create_app(Settings(db_path=db_path, config_path=None))):
+        pass
+    db_path.chmod(0o644)
+
+    with TestClient(create_app(Settings(db_path=db_path, config_path=None))):
+        pass
+
+    assert stat.S_IMODE(db_path.stat().st_mode) == 0o600
 
 
 def test_it_starts_with_no_configuration_file_at_all(tmp_path: Path, frozen_clock: None) -> None:

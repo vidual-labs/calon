@@ -8,6 +8,7 @@ leaks its (secret) URL into an error, and that it is read-only.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import httpx
@@ -102,6 +103,31 @@ class TestFailures:
 
     def test_an_oversized_feed_is_refused(self) -> None:
         provider = _provider(client=_client(body=b"x" * (MAX_FEED_BYTES + 1)))
+        with pytest.raises(CalendarProviderError, match="larger than"):
+            provider.free_busy("default", WINDOW_START, WINDOW_END)
+
+    def test_an_endless_feed_is_cut_off_at_the_cap_rather_than_buffered(self) -> None:
+        # A body with no end: the only way this test finishes is if the provider stops
+        # reading once it passes MAX_FEED_BYTES, instead of buffering the response first.
+        def endless() -> Iterator[bytes]:
+            while True:
+                yield b"x" * 65536
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=endless())
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        provider = _provider(client=client)
+        with pytest.raises(CalendarProviderError, match="larger than"):
+            provider.free_busy("default", WINDOW_START, WINDOW_END)
+
+    def test_a_feed_declaring_an_oversized_length_is_refused_before_reading(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, headers={"content-length": str(MAX_FEED_BYTES + 1)}, content=b""
+            )
+
+        provider = _provider(client=httpx.Client(transport=httpx.MockTransport(handler)))
         with pytest.raises(CalendarProviderError, match="larger than"):
             provider.free_busy("default", WINDOW_START, WINDOW_END)
 

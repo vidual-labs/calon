@@ -132,6 +132,22 @@ should be able to book or check free times. Only the *operator* surface and the
 for the public leaves the page working but without the day-and-time picker: it falls back
 to plain date and time fields, and booking still works (ADR 0018).
 
+**Failed logins are limited.** After 10 wrong logins from one address within 15 minutes,
+`/login` answers `429 Too Many Requests` (with a `Retry-After` header) until the oldest of
+those failures is 15 minutes old — even for the right key, so a guesser learns nothing
+more. A wrong `CALON_API_KEY` in a `Bearer` header counts against the same limit. A
+successful login clears the address's count, and a restart clears all counts.
+
+The limit counts per client address, so calon has to see the visitor's address. Behind a
+reverse proxy it sees the proxy's, unless the server is told to trust the proxy's
+`X-Forwarded-For` header: set `FORWARDED_ALLOW_IPS` to the proxy's address **as calon sees
+it** — an IP or a CIDR range. With the Docker Compose setup and a proxy on the host, that
+is the gateway of the Compose network (`docker network inspect calon_default`, the
+`Gateway` field). **Never set it to `*`**: that trusts whatever a visitor writes into the
+header, and each guess could claim a new address. Left at the default (`127.0.0.1`), every
+visitor behind the proxy shares one counter — still a hard cap on guessing, but someone
+hammering the login can lock you out of it for up to 15 minutes.
+
 If `CALON_LOGIN` is left empty, the operator panel and the `.ics` endpoint return `503`
 ("login not configured") — the instance *fails closed* rather than opening the panel to
 anyone. The public booking API still works. Set `CALON_LOGIN` before you expose the
@@ -143,7 +159,8 @@ instance publicly.
 (`Authorization: Bearer <key>`). Set it if you want to script the operator panel from
 cron or wire up an external system. It shares the same authorisation as the login; a
 request with either the valid cookie **or** the Bearer key is admitted. Leave it empty to
-disable the Bearer path.
+disable the Bearer path. Use a long random value (`openssl rand -hex 32`): unlike the
+login, a script never has to type it.
 
 ### TLS
 
@@ -151,6 +168,20 @@ calon does not terminate TLS. Terminate it at the reverse proxy and forward to p
 Anything that sets `X-Forwarded-Proto` correctly qualifies — Caddy, nginx, or Traefik.
 With TLS, set `CALON_BASE_URL` to the `https://` address so the session cookie gains the
 `Secure` attribute and the calendar links are absolute and correct.
+
+The Compose file publishes calon on `127.0.0.1` only, so the proxy on the same host is the
+only way in and nothing reaches calon over plain HTTP from the network. If your proxy runs
+on a different machine, change the port mapping deliberately and restrict it with a
+firewall; do not publish port 8000 to the internet.
+
+### The database file holds secrets
+
+`calon.db` holds requesters' personal data and, once you set up calendar sync through the
+dashboard, the refresh tokens, OAuth client secrets and feed addresses too — in plain text
+(ADR 0014, ADR 0016). calon therefore creates it, and its `-wal` and `-shm` files, readable
+and writable by the account running calon only (mode `0600`), and tightens an existing
+database to that mode at every start. Anyone who can read the file, or a backup of it, can
+read your calendars; keep backups just as private.
 
 ## Resource calendar sync
 
@@ -304,9 +335,10 @@ control (the example file is a template only), and restrict file permissions on 
 production host. For a resource set up through the dashboard instead,
 the refresh token lives in `calon.db`'s `calendar_credential` table (ADR 0014), and — if
 you entered the OAuth client there rather than in the config file — the `client_id` and
-`client_secret` live in its `calendar_oauth_client` table (ADR 0016). Give that file the
-same file-permission care as `config/calon.toml`, since it is now also a secrets file, not
-just application data. Either way, the token is held in memory for the running
+`client_secret` live in its `calendar_oauth_client` table (ADR 0016). calon keeps that file
+owner-only (see [The database file holds secrets](#the-database-file-holds-secrets)); give
+your backups of it the same care as `config/calon.toml`, since it is also a secrets file,
+not just application data. Either way, the token is held in memory for the running
 process's lifetime; if the provider rotates it *during that process's uptime*, the
 rotation is adopted in memory only and is not written back to the TOML or the database
 (unchanged from ADR 0013 — still an open question, not something the Connect button

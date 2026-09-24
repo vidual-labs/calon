@@ -138,16 +138,31 @@ class IcsFeedProvider:
 
     def _fetch(self) -> str:
         client = self._client or httpx.Client(timeout=_TIMEOUT_SECONDS, follow_redirects=True)
+        too_large = CalendarProviderError(
+            f"ics feed for {self.resource_slug!r} is larger than "
+            f"{MAX_FEED_BYTES // (1024 * 1024)} MB and was not read"
+        )
         try:
-            response = client.get(self.feed_url, headers={"accept": "text/calendar, */*"})
-            if response.status_code >= 400:
-                # The URL itself is a secret (it is what authorizes the read), so it is
-                # never echoed into the message — the resource slug identifies which feed.
-                raise CalendarProviderError(
-                    f"ics feed for {self.resource_slug!r} returned HTTP {response.status_code}",
-                    status_code=response.status_code,
-                )
-            content = response.content
+            # Streamed, so the size cap is enforced while reading: a hostile or broken URL
+            # is cut off at MAX_FEED_BYTES instead of being buffered whole first.
+            with client.stream(
+                "GET", self.feed_url, headers={"accept": "text/calendar, */*"}
+            ) as response:
+                if response.status_code >= 400:
+                    # The URL itself is a secret (it is what authorizes the read), so it is
+                    # never echoed into the message — the resource slug identifies which feed.
+                    raise CalendarProviderError(
+                        f"ics feed for {self.resource_slug!r} returned HTTP {response.status_code}",
+                        status_code=response.status_code,
+                    )
+                declared = response.headers.get("content-length", "")
+                if declared.isdigit() and int(declared) > MAX_FEED_BYTES:
+                    raise too_large
+                content = bytearray()
+                for chunk in response.iter_bytes():
+                    content.extend(chunk)
+                    if len(content) > MAX_FEED_BYTES:
+                        raise too_large
         except httpx.HTTPError as exc:
             raise CalendarProviderError(
                 f"ics feed for {self.resource_slug!r} could not be fetched: {type(exc).__name__}"
@@ -156,9 +171,4 @@ class IcsFeedProvider:
             if self._owns_client:
                 client.close()
 
-        if len(content) > MAX_FEED_BYTES:
-            raise CalendarProviderError(
-                f"ics feed for {self.resource_slug!r} is larger than "
-                f"{MAX_FEED_BYTES // (1024 * 1024)} MB and was not read"
-            )
         return content.decode("utf-8", errors="replace")

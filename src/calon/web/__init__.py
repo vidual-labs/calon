@@ -38,6 +38,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from calon.api.deps import (
     AuthorisedOperator,
@@ -386,8 +387,25 @@ async def login_submit(request: Request, settings: SettingsDep) -> Response:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
+    client = request.client.host if request.client is not None else "unknown"
+    wait = store.throttle.retry_after(client)
+    if wait:
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={
+                "error": "Too many failed logins from this address. "
+                f"Please try again in {-(-wait // 60)} minute(s)."
+            },
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            headers={"Retry-After": str(wait)},
+        )
+
     login_input = await _extract_login(request)
-    if store.verify(login_input):
+    # The key hash is deliberately slow; run it off the event loop so one login attempt
+    # does not stall every other request the process is serving.
+    if await run_in_threadpool(store.verify, login_input):
+        store.throttle.clear(client)
         token = store.create_session()
         # Build the redirect, then attach the session cookie to *that* response. Injecting
         # a separate ``response`` here would be a different object from the one FastAPI
@@ -401,6 +419,7 @@ async def login_submit(request: Request, settings: SettingsDep) -> Response:
             secure=settings.base_url.startswith("https://"),
         )
         return response
+    store.throttle.record_failure(client)
     return templates.TemplateResponse(
         request=request,
         name="login.html",
@@ -718,8 +737,11 @@ async def _extract_login(request: Request) -> str:
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         data = await request.body()
-        payload = json.loads(data.decode("utf-8")) if data else {}
-        return str(payload.get("login", ""))
+        try:
+            payload = json.loads(data.decode("utf-8")) if data else {}
+        except ValueError:  # malformed JSON or bytes: a failed login, not a server error
+            return ""
+        return str(payload.get("login", "")) if isinstance(payload, dict) else ""
     body = (await request.body()).decode("utf-8", errors="replace")
     for part in body.split("&"):
         if part.startswith("login="):

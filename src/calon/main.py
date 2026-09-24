@@ -24,7 +24,7 @@ from calon.api.v1 import router as v1_router
 from calon.calendars import CalendarProviderRegistry
 from calon.clock import utcnow
 from calon.config import OperatorConfig, Settings, load_operator_config
-from calon.db import Database
+from calon.db import Database, restrict_to_owner
 from calon.intake.external import SourceRegistry
 from calon.migrate import upgrade_to_head
 from calon.models import CalendarCredentialRow
@@ -66,6 +66,8 @@ def create_app(settings: Settings | None = None, config: OperatorConfig | None =
         # Before anything else: SQLite creates a missing database file, but not the
         # directory holding it, and migrations run before the first connection is opened.
         resolved_settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # The file holds calendar credentials: owner-only, before anything writes to it.
+        restrict_to_owner(resolved_settings.db_path)
 
         upgrade_to_head(resolved_settings.database_url)
         database = Database.from_path(resolved_settings.db_path)

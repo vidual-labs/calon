@@ -70,19 +70,35 @@ def get_authorised_operator(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Bearer key (optional): ``curl`` and external systems, no browser required.
+    # Bearer key (optional): ``curl`` and external systems, no browser required. A wrong
+    # key counts against the same per-client throttle as a wrong login, so the key cannot
+    # be guessed at network speed either.
+    client = request.client.host if request.client is not None else "unknown"
+    bearer_failed = False
     if settings.api_key:
         header = request.headers.get("authorization", "")
         if header.lower().startswith("bearer "):
+            wait = _login_store.throttle.retry_after(client)
+            if wait:
+                raise HTTPException(
+                    status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="too many failed attempts; try again later",
+                    headers={"Retry-After": str(wait)},
+                )
             supplied = header[7:].strip()
-            if hmac.compare_digest(supplied, settings.api_key):
+            # Compared as bytes: ``compare_digest`` raises on a non-ASCII ``str``, which
+            # would turn an arbitrary header into a 500 instead of a 401.
+            if hmac.compare_digest(supplied.encode("utf-8"), settings.api_key.encode("utf-8")):
                 return _login_store
+            bearer_failed = True
         # Fall through to the cookie path if the Bearer key was absent or wrong.
 
     cookie = request.cookies.get(SESSION_COOKIE)
     if _login_store.valid_session(cookie):
         return _login_store
 
+    if bearer_failed:
+        _login_store.throttle.record_failure(client)
     raise HTTPException(
         status.HTTP_401_UNAUTHORIZED,
         detail="operator login required",

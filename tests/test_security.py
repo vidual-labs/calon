@@ -1,13 +1,13 @@
-"""Unit tests for ``calon.security``'s session table.
+"""Unit tests for ``calon.security``'s session table and login throttle.
 
 The password-hashing primitives are exercised indirectly through the login/logout HTTP
-tests in ``tests/test_calendar_handoff.py``; this file covers ``SessionTable`` in
-isolation, where the eviction behaviour below is otherwise untested.
+tests in ``tests/test_calendar_handoff.py``; this file covers ``SessionTable`` and
+``LoginThrottle`` in isolation, where the eviction behaviour below is otherwise untested.
 """
 
 from __future__ import annotations
 
-from calon.security import SessionTable, new_oauth_state, verify_oauth_state
+from calon.security import LoginThrottle, SessionTable, new_oauth_state, verify_oauth_state
 
 KEY = b"0" * 32
 
@@ -108,3 +108,48 @@ class TestOAuthState:
         # safe even though the payload format itself uses ":" as a separator.
         state = new_oauth_state(KEY, "my-resource", now=1000.0)
         assert verify_oauth_state(KEY, state, now=1000.0) == "my-resource"
+
+
+class TestLoginThrottle:
+    def test_a_client_may_fail_up_to_the_limit_and_is_then_refused(self) -> None:
+        throttle = LoginThrottle(max_failures=3, window_seconds=60)
+        for second in range(3):
+            assert throttle.retry_after("1.2.3.4", now=1000.0 + second) == 0
+            throttle.record_failure("1.2.3.4", now=1000.0 + second)
+        assert throttle.retry_after("1.2.3.4", now=1003.0) > 0
+
+    def test_retry_after_counts_down_to_the_oldest_failure_ageing_out(self) -> None:
+        throttle = LoginThrottle(max_failures=2, window_seconds=60)
+        throttle.record_failure("c", now=1000.0)
+        throttle.record_failure("c", now=1010.0)
+        assert throttle.retry_after("c", now=1030.0) == 31
+        # Exactly on the edge the first failure has aged out, so a slot is free again.
+        assert throttle.retry_after("c", now=1060.0) == 0
+
+    def test_clients_are_counted_separately(self) -> None:
+        throttle = LoginThrottle(max_failures=1, window_seconds=60)
+        throttle.record_failure("attacker", now=1000.0)
+        assert throttle.retry_after("attacker", now=1001.0) > 0
+        assert throttle.retry_after("operator", now=1001.0) == 0
+
+    def test_clear_forgets_a_clients_failures(self) -> None:
+        throttle = LoginThrottle(max_failures=1, window_seconds=60)
+        throttle.record_failure("c", now=1000.0)
+        throttle.clear("c")
+        assert throttle.retry_after("c", now=1001.0) == 0
+
+    def test_stale_clients_are_evicted_rather_than_accumulating_forever(self) -> None:
+        throttle = LoginThrottle(max_failures=5, window_seconds=60)
+        for n in range(100):
+            throttle.record_failure(f"10.0.0.{n}", now=1000.0)
+        throttle.record_failure("late", now=2000.0)
+        assert list(throttle._failures) == ["late"]
+
+    def test_the_sweep_runs_at_most_once_a_minute(self) -> None:
+        # A flood from many addresses must not rescan the whole table on every failure.
+        throttle = LoginThrottle(max_failures=5, window_seconds=10)
+        throttle.record_failure("a", now=1000.0)
+        throttle.record_failure("b", now=1030.0)  # "a" is stale, but no sweep is due yet
+        assert set(throttle._failures) == {"a", "b"}
+        throttle.record_failure("c", now=1060.0)
+        assert set(throttle._failures) == {"c"}
