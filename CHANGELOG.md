@@ -12,6 +12,8 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- The operator dashboard shows the running calon version in its footer. Public pages
+  (booking form, login) do not show it.
 - **Calendar credentials are now stored encrypted.** Set `CALON_SECRET_KEY` (generate it
   with `openssl rand -base64 32`) and calon encrypts the Google refresh tokens, OAuth
   client secrets and feed addresses it keeps in `calon.db`, so a backup or copy of the

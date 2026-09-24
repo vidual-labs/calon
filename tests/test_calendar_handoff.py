@@ -401,6 +401,21 @@ def test_the_dashboard_is_at_admin_and_nowhere_else(operator_client: TestClient)
     )
 
 
+def test_the_dashboard_footer_shows_the_version(operator_client: TestClient) -> None:
+    from calon import __version__
+
+    _log_in(operator_client, "op-key-123")
+    assert f"calon v{__version__}" in operator_client.get("/admin").text
+
+
+def test_public_pages_do_not_show_the_version(operator_client: TestClient) -> None:
+    """The version is for the operator only; public pages do not advertise it."""
+    from calon import __version__
+
+    assert f"v{__version__}" not in operator_client.get("/book").text
+    assert f"v{__version__}" not in operator_client.get("/login").text
+
+
 def test_login_lands_on_the_dashboard(operator_client: TestClient) -> None:
     """A successful login redirects to the panel's own address."""
     response = operator_client.post("/login", json={"login": "op-key-123"}, follow_redirects=False)
