@@ -12,6 +12,12 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- **Run several calon instances on one server.** Give each extra instance its own checkout
+  and set `COMPOSE_PROJECT_NAME` and `CALON_HOST_PORT` in its `.env`; each then gets its
+  own container, image, and database, and is upgraded on its own. Previously a second
+  checkout replaced the first instance's container and shared its database. An existing
+  single instance needs no change and keeps its data. See "Several instances on one host"
+  in `docs/self-hosting.md`.
 - The operator dashboard shows the running calon version in its footer. Public pages
   (booking form, login) do not show it.
 - **Calendar credentials are now stored encrypted.** Set `CALON_SECRET_KEY` (generate it
@@ -89,6 +95,9 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Changed
 
+- **BREAKING:** the Docker container is now named `calon-calon-1` instead of `calon`
+  (Compose's own naming, so several instances can coexist). `docker compose` commands are
+  unaffected; update any script that calls `docker exec calon` or `docker logs calon`.
 - **BREAKING:** the Calendars panel now refuses to store calendar credentials (an OAuth
   client, a Google connection, or a feed address) until `CALON_SECRET_KEY` is set, and
   says so. Calendars you already connected keep working after the upgrade; set the key

@@ -11,6 +11,12 @@
 #   docker compose up -d
 #
 # The container persists its SQLite database under the `data` volume.
+#
+# Several instances on one host: give each its own checkout and, in its .env,
+# its own COMPOSE_PROJECT_NAME and CALON_HOST_PORT. The project name keeps the
+# containers, the image, the network and the database volume apart; without it
+# every checkout is the same project "calon" and they would share one database
+# (see docs/self-hosting.md).
 
 name: calon
 
@@ -19,8 +25,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: calon:${CALON_IMAGE_TAG:-latest}
-    container_name: calon
+    # Named after the project so each instance on a host builds and keeps its
+    # own image, and upgrading one never swaps the code under another.
+    image: ${COMPOSE_PROJECT_NAME:-calon}:${CALON_IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
       # Expose only the loopback address on the host. A reverse proxy should be
