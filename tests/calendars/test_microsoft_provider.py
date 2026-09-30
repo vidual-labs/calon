@@ -304,3 +304,61 @@ class TestUpsertGraph:
         assert post["path"].endswith(f"/users/{_USER}/events")
         assert "bk-42" in post["body"]
         provider.close()
+
+
+class TestRemoveGraph:
+    def _event(self) -> CalendarEvent:
+        return CalendarEvent(
+            uid="bk-42", summary="", starts_at_utc=at(10, 0), ends_at_utc=at(11, 0)
+        )
+
+    def test_remove_deletes_the_event_found_by_its_ical_uid(self):
+        scripted = Scripted(
+            token=[("tok-1", 3600, "seed-refresh")],
+            auth=[
+                (200, {"value": [{"iCalUID": "bk-42", "id": "g-event-1"}]}),
+                (204, {}),
+            ],
+        )
+        provider = _provider(scripted)
+        provider.remove_event("default", self._event())
+        api = [s for s in scripted.seen if not s["path"].endswith("/token")]
+        assert [s["method"] for s in api] == ["GET", "DELETE"]
+        assert api[1]["path"].endswith(f"/users/{_USER}/events/g-event-1")
+        provider.close()
+
+    def test_no_event_carrying_the_uid_means_nothing_to_delete(self):
+        scripted = Scripted(
+            token=[("tok-1", 3600, "seed-refresh")],
+            auth=[(200, {"value": [{"iCalUID": "someone-else", "id": "g-event-9"}]})],
+        )
+        provider = _provider(scripted)
+        provider.remove_event("default", self._event())
+        api = [s for s in scripted.seen if not s["path"].endswith("/token")]
+        assert [s["method"] for s in api] == ["GET"]
+        provider.close()
+
+    def test_a_delete_racing_a_manual_removal_is_not_an_error(self):
+        scripted = Scripted(
+            token=[("tok-1", 3600, "seed-refresh")],
+            auth=[
+                (200, {"value": [{"iCalUID": "bk-42", "id": "g-event-1"}]}),
+                (404, {"error": {"code": "ErrorItemNotFound"}}),
+            ],
+        )
+        provider = _provider(scripted)
+        provider.remove_event("default", self._event())
+        provider.close()
+
+    def test_any_other_failure_raises_the_provider_error(self):
+        scripted = Scripted(
+            token=[("tok-1", 3600, "seed-refresh")],
+            auth=[
+                (200, {"value": [{"iCalUID": "bk-42", "id": "g-event-1"}]}),
+                (403, {"error": {"code": "ErrorAccessDenied"}}),
+            ],
+        )
+        provider = _provider(scripted)
+        with pytest.raises(CalendarProviderError):
+            provider.remove_event("default", self._event())
+        provider.close()

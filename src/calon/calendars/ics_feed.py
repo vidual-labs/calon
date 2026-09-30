@@ -119,6 +119,10 @@ class IcsFeedProvider:
         """
         return None
 
+    def remove_event(self, resource_slug: str, event: CalendarEvent) -> None:
+        """Nothing to do: calon never wrote to a read-only feed, so there is nothing to remove."""
+        return None
+
     # -- fetching ----------------------------------------------------------
 
     def _feed_text(self) -> str:

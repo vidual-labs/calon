@@ -248,6 +248,10 @@ Written only on acceptance.
 `block_end_utc` · `status` · `ics_uid` · `ics_sequence` · `created_at_utc` ·
 `cancelled_at_utc`
 
+`status` is `confirmed` or `cancelled`. Only the operator cancels, from the dashboard
+(ADR 0020); the row is kept, `cancelled_at_utc` is set, and because every conflict and
+availability query filters on `status = 'confirmed'`, the slot is free again at once.
+
 `block_start_utc` and `block_end_utc` are `start − buffer_before` and `end + buffer_after`.
 They are **materialized** so conflict detection is one indexed range query:
 
@@ -279,7 +283,9 @@ the log readable in the order things actually happened; `id` remains its stable 
 
 Event types: `intent.received`, `intent.normalized`, `intent.rejected`, `intent.accepted`,
 `booking.created`, `booking.cancelled`, `handoff.generated`, `intake.replayed`,
-`intake.rejected_signature`.
+`intake.rejected_signature`, and for a resource with a connected calendar
+`booking.calendar_synced`, `booking.calendar_sync_failed`, `booking.calendar_removed`, and
+`booking.calendar_remove_failed`.
 
 ### `calendar_credential`
 

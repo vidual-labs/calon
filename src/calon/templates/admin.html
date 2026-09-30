@@ -45,6 +45,10 @@
     .btn { display:inline-block; background:var(--accent); color:#0f1116; font-weight:600;
            font-size:13px; padding:6px 14px; border-radius:6px; text-decoration:none;
            border:none; cursor:pointer; }
+    form.cancel { margin-top:6px; }
+    form.cancel button { background:none; border:none; padding:0; color:var(--dim); cursor:pointer;
+      font-size:12px; text-decoration:underline; }
+    form.cancel button:hover { color:#ff6b6b; }
     .btn.secondary { background:none; color:var(--dim); border:1px solid var(--border); }
     .flash { padding:10px 14px; border-radius:6px; font-size:13px; margin-bottom:16px; }
     .flash.ok { background:rgba(81,207,102,.14); color:var(--ok); }
@@ -358,6 +362,12 @@ client_secret = "..."</pre>
             <td>
               {% if item.status == "confirmed" %}
                 <span class="status confirmed">Accepted</span>
+                <form method="post" action="/admin/bookings/{{ item.booking_id }}/cancel" class="cancel"
+                      onsubmit="return confirm('Cancel this booking? Its time becomes bookable again and it is removed from a connected calendar. The requester is not notified.');">
+                  <button type="submit">Cancel booking</button>
+                </form>
+              {% elif item.status == "cancelled" %}
+                <span class="status none">Cancelled</span>
               {% elif item.status == "rejected" %}
                 <span class="status rejected">Rejected</span>
               {% else %}
@@ -367,13 +377,15 @@ client_secret = "..."</pre>
             <td>
               {% if item.calendar_sync == "synced" %}
                 <span class="status confirmed">Synced</span><br>
-              {% elif item.calendar_sync == "failed" %}
-                <span class="status rejected">Sync failed</span><br>
+              {% elif item.calendar_sync == "removed" %}
+                <span class="status none">Removed</span><br>
+              {% elif item.calendar_sync in ("failed", "remove_failed") %}
+                <span class="status rejected">{{ "Sync failed" if item.calendar_sync == "failed" else "Removal failed" }}</span><br>
                 {% if item.calendar_sync_detail %}
                   <span class="mono" style="font-size:11px;word-break:break-all">{{ item.calendar_sync_detail }}</span><br>
                 {% endif %}
               {% endif %}
-              {% if item.ics_url %}
+              {% if item.ics_url and item.status != "cancelled" %}
                 <a class="ics" href="{{ item.ics_url }}" target="_blank">Download .ics</a>
               {% else %}
                 <span class="mono">—</span>

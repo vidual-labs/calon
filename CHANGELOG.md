@@ -12,6 +12,12 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- **Cancel a booking from the operator dashboard.** Each accepted booking has a *Cancel
+  booking* link. Cancelling frees the time straight away, so it can be booked again, and
+  removes the event from a connected Google or Microsoft 365 calendar. The booking stays in
+  the list as *Cancelled*, and the requester is not notified — tell them yourself. If the
+  calendar cannot be reached, the booking is still cancelled and the dashboard shows
+  *Removal failed* with the reason.
 - **Run several calon instances on one server.** Give each extra instance its own checkout
   and set `COMPOSE_PROJECT_NAME` and `CALON_HOST_PORT` in its `.env`; each then gets its
   own container, image, and database, and is upgraded on its own. Previously a second
@@ -125,6 +131,8 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Fixed
 
+- The operator dashboard listed rejected booking requests as *Queued*. They now show as
+  *Rejected*.
 - Bookings from an OpenFlow **Date & Timeslot** field connected to calon were rejected
   with a 400 and never booked. The field submits its answer as `2026-09-02 09:30
   Europe/Berlin`, which the OpenFlow intake could not read; it now accepts that format,

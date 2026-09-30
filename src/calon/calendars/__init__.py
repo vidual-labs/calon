@@ -88,10 +88,10 @@ class CalendarEvent:
 
 @runtime_checkable
 class CalendarProvider(Protocol):
-    """A provider adapts a resource's external calendar to two calls (ADR 0009).
+    """A provider adapts a resource's external calendar to three calls (ADR 0009, 0020).
 
     Every implementation must expose ``name`` (the provider identifier, e.g. "google"
-    or "microsoft") and the two methods below. A :class:`CalendarProviderError` out of
+    or "microsoft") and the three methods below. A :class:`CalendarProviderError` out of
     either method means *degrade to calon-only* at the call site, never a refused
     booking (CLAUDE.md §2).
     """
@@ -125,6 +125,17 @@ class CalendarProvider(Protocol):
         Idempotent: a second call with the same ``uid`` does not create a duplicate.
         Raises :class:`CalendarProviderError` on any failure; the caller audits the
         rejection but does not re-raise.
+        """
+        ...
+
+    def remove_event(self, resource_slug: str, event: CalendarEvent) -> None:
+        """Delete the provider's event keyed by ``event.uid`` (a cancelled booking).
+
+        ``event`` is the booking's event as :meth:`upsert_event` wrote it; a provider
+        that finds events by time (Microsoft Graph) needs its start as well as its uid.
+        Idempotent: an event that is already gone, or was never written, is not an
+        error. Raises :class:`CalendarProviderError` on any other failure; the caller
+        audits it but never lets it undo the cancellation (ADR 0020).
         """
         ...
 
@@ -246,6 +257,20 @@ class CalendarProviderRegistry:
             return
         provider.upsert_event(resource_slug, event)
 
+    def remove_event(self, resource_slug: str, event: CalendarEvent) -> None:
+        """Remove a cancelled booking's event from the provider (ADR 0020).
+
+        Propagates :class:`CalendarProviderError` like :meth:`upsert_event`, for the same
+        reason: the cancellation has already committed, and the caller audits the
+        failure. A resource with no writable provider is a silent no-op.
+        """
+        provider = self._providers.get(resource_slug)
+        if provider is None:
+            return
+        if not self.writes_back(resource_slug):
+            return
+        provider.remove_event(resource_slug, event)
+
     def writes_back(self, resource_slug: str) -> bool:
         """Whether this resource's provider can be written to at all (ADR 0017).
 
@@ -325,6 +350,7 @@ class FakeCalendar:
         self._events: dict[str, dict[str, CalendarEvent]] = {}
         self.fail_free_busy = False
         self.fail_upsert = False
+        self.fail_remove = False
 
     def seed_busy(
         self,
@@ -358,6 +384,11 @@ class FakeCalendar:
         if self.fail_upsert:
             raise CalendarProviderError("FakeCalendar is configured to fail upsert")
         self._events.setdefault(resource_slug, {})[event.uid] = event
+
+    def remove_event(self, resource_slug: str, event: CalendarEvent) -> None:
+        if self.fail_remove:
+            raise CalendarProviderError("FakeCalendar is configured to fail remove")
+        self._events.get(resource_slug, {}).pop(event.uid, None)
 
     def event(self, resource_slug: str, uid: str) -> CalendarEvent | None:
         """Fetch one stored event by uid (test assertion helper)."""

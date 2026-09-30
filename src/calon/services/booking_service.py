@@ -30,11 +30,11 @@ from calon.domain import AvailabilityPolicy, Decision, decide, to_utc
 from calon.domain.rules import BookingRequest
 from calon.ids import new_id
 from calon.intake.native import NATIVE_SOURCE
-from calon.models import Booking, BookingIntent
+from calon.models import Booking, BookingIntent, ResourceRow
 from calon.schemas import BookingIntentIn, DecisionOut
 from calon.services import repository
 
-__all__ = ["AcceptedBooking", "Submission", "submit_intent"]
+__all__ = ["AcceptedBooking", "CancelledBooking", "Submission", "cancel_booking", "submit_intent"]
 
 #: How far either side of the interesting range to load bookings and blackouts. The daily
 #: limit rule counts everything on a candidate's *local* day, which can reach a day beyond
@@ -77,6 +77,68 @@ class Submission:
     @property
     def accepted(self) -> bool:
         return self.booking is not None
+
+
+@dataclass(frozen=True, slots=True)
+class CancelledBooking:
+    """A booking the operator cancelled, with what the calendar removal needs (ADR 0020).
+
+    ``already_cancelled`` is ``True`` when the booking was cancelled before this call; the
+    caller then has nothing new to audit and nothing to remove.
+    """
+
+    id: str
+    intent_id: str
+    resource_slug: str
+    start_utc: datetime
+    end_utc: datetime
+    ics_uid: str | None
+    already_cancelled: bool
+
+
+def cancel_booking(session: Session, booking_id: str, *, now: datetime) -> CancelledBooking | None:
+    """Cancel a confirmed booking on the operator's word (ADR 0020).
+
+    The row is kept and marked ``cancelled``, never deleted: the conflict check only counts
+    ``confirmed`` bookings, so this alone frees the slot, and the booking stays in the
+    history and the audit log. Cancelling twice is harmless. Returns ``None`` for an
+    unknown id.
+
+    Must run inside ``Database.write()``, like :func:`submit_intent`, so a cancellation
+    and a booking for the slot it frees are ordered by the same lock.
+    """
+    row = session.get(Booking, booking_id)
+    if row is None:
+        return None
+
+    resource = session.get(ResourceRow, row.resource_id)
+    already_cancelled = row.status == "cancelled"
+    if not already_cancelled:
+        row.status = "cancelled"
+        row.cancelled_at_utc = now
+        repository.append_audit(
+            session,
+            at=now,
+            actor="operator",
+            event_type="booking.cancelled",
+            intent_id=row.intent_id,
+            booking_id=row.id,
+            payload={
+                "start_utc": row.start_utc.isoformat(),
+                "end_utc": row.end_utc.isoformat(),
+            },
+        )
+        session.flush()
+
+    return CancelledBooking(
+        id=row.id,
+        intent_id=row.intent_id,
+        resource_slug=resource.slug if resource is not None else "",
+        start_utc=row.start_utc,
+        end_utc=row.end_utc,
+        ics_uid=row.ics_uid,
+        already_cancelled=already_cancelled,
+    )
 
 
 def _decision_to_json(decision: Decision) -> dict[str, Any]:

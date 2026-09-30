@@ -100,6 +100,19 @@ class TestUpsertContract:
         with pytest.raises(CalendarProviderError):
             provider.upsert_event("default", self._event())
 
+    def test_remove_drops_the_event_and_tolerates_a_missing_one(self):
+        provider = FakeCalendar()
+        provider.upsert_event("default", self._event("uid-1"))
+        provider.remove_event("default", self._event("uid-1"))
+        provider.remove_event("default", self._event("uid-1"))
+        assert provider.event("default", "uid-1") is None
+
+    def test_a_provider_configured_to_fail_raises_in_remove(self):
+        provider = FakeCalendar()
+        provider.fail_remove = True
+        with pytest.raises(CalendarProviderError):
+            provider.remove_event("default", self._event())
+
     def test_an_event_that_ends_before_it_starts_is_rejected(self):
         with pytest.raises(ValueError):
             CalendarEvent(
