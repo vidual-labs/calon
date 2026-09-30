@@ -241,6 +241,45 @@ class TestUpsertHttp:
         assert _google_event_id(self.UID) == _google_event_id(self.UID)
 
 
+class TestRemoveHttp:
+    UID = TestUpsertHttp.UID
+
+    def _event(self) -> CalendarEvent:
+        return CalendarEvent(
+            uid=self.UID, summary="", starts_at_utc=at(10, 0), ends_at_utc=at(11, 0)
+        )
+
+    def test_remove_deletes_the_event_the_upsert_wrote(self):
+        scripted = Scripted(token=[("tok-1", 3600, "seed-refresh")], auth=[(204, {})])
+        provider = _provider(scripted)
+        provider.remove_event("default", self._event())
+        api = [s for s in scripted.seen if not s["path"].endswith("/token")]
+        assert [s["method"] for s in api] == ["DELETE"]
+        # The same derived id the upsert PATCHes and POSTs, never the raw UID.
+        assert api[0]["path"].endswith(f"/events/{_google_event_id(self.UID)}")
+        provider.close()
+
+    @pytest.mark.parametrize("status", [404, 410])
+    def test_an_event_that_is_already_gone_is_not_an_error(self, status: int) -> None:
+        scripted = Scripted(
+            token=[("tok-1", 3600, "seed-refresh")],
+            auth=[(status, {"error": {"code": status, "message": "gone"}})],
+        )
+        provider = _provider(scripted)
+        provider.remove_event("default", self._event())
+        provider.close()
+
+    def test_any_other_failure_raises_the_provider_error(self):
+        scripted = Scripted(
+            token=[("tok-1", 3600, "seed-refresh")],
+            auth=[(403, {"error": {"code": 403, "message": "forbidden"}})],
+        )
+        provider = _provider(scripted)
+        with pytest.raises(CalendarProviderError):
+            provider.remove_event("default", self._event())
+        provider.close()
+
+
 class TestBuildAuthorizeUrl:
     """The consent-screen URL for the operator-initiated connect flow (ADR 0014)."""
 

@@ -44,6 +44,70 @@ The generated API reference is at `/docs` (disable with `CALON_DOCS_ENABLED=fals
 production). The operator panel is at `/login`; the public booking form at `/book`
 arrives in phase 4.
 
+## Several instances on one host
+
+One calon instance serves one operator: one login, one resource, one database. To serve a
+second operator from the same server, run a **second instance** beside the first rather
+than sharing one — each keeps its own login, bookings, calendar connection, and encryption
+key, and nothing is shared between them.
+
+Give the new instance its own checkout, and in its `.env` its own **Compose project name**
+and **host port**:
+
+```bash
+git clone https://github.com/vidual-labs/calon.git /srv/calon-acme
+cd /srv/calon-acme
+cp .env.example .env
+cp config/calon.example.toml config/calon.toml
+```
+
+```dotenv
+# /srv/calon-acme/.env
+COMPOSE_PROJECT_NAME=calon-acme
+CALON_HOST_PORT=8001
+CALON_BASE_URL=https://acme.example.com
+CALON_INSTANCE_HOST=acme.example.com
+CALON_LOGIN=...          # its own; never reuse another instance's
+CALON_SECRET_KEY=...     # its own: openssl rand -base64 32
+```
+
+```bash
+docker compose up -d --build
+```
+
+- **The project name is what keeps instances apart.** It names the container, the image,
+  the network, and the database volume (`<project>_calon-data`). Two checkouts left on the
+  default name `calon` are the *same* project to Docker: starting the second replaces the
+  first one's container, and both use one database. Set `COMPOSE_PROJECT_NAME` before the
+  new instance's first start.
+- **Never rename an instance that already has bookings.** A new project name means a new,
+  empty volume; the bookings stay in the old one. The first instance on a host can keep
+  the default name `calon` indefinitely.
+- **Each instance builds its own image** (`<project>:latest`), so you upgrade them one at
+  a time: `git pull` and `docker compose up -d --build` in one checkout leaves the others
+  on their current version.
+- **Route each hostname to its port** at the reverse proxy, for example with Caddy:
+
+  ```caddyfile
+  booking.example.com {
+      reverse_proxy 127.0.0.1:8000
+  }
+  acme.example.com {
+      reverse_proxy 127.0.0.1:8001
+  }
+  ```
+
+- **`FORWARDED_ALLOW_IPS` differs per instance**, because each project has its own
+  network: look up the gateway with `docker network inspect <project>_default`.
+- **Back up each instance's database** separately (see [Backups](#backups)).
+- **External sources are configured per instance.** One OpenFlow installation can feed
+  several instances: point each form's webhook at the instance that should receive it
+  (`https://acme.example.com/api/v1/openflow`), and add that form's
+  `[sources.openflow.fields.<formId>]` table only to that instance's config. An instance
+  answers a form it has no mapping for with `400` and books nothing, so a form sent to the
+  wrong instance fails loudly rather than landing in someone else's calendar. Use a
+  separate `secret` per instance wherever the source lets you set one.
+
 ## Configuration
 
 Two files, with a deliberate split:
@@ -142,7 +206,8 @@ The limit counts per client address, so calon has to see the visitor's address. 
 reverse proxy it sees the proxy's, unless the server is told to trust the proxy's
 `X-Forwarded-For` header: set `FORWARDED_ALLOW_IPS` to the proxy's address **as calon sees
 it** — an IP or a CIDR range. With the Docker Compose setup and a proxy on the host, that
-is the gateway of the Compose network (`docker network inspect calon_default`, the
+is the gateway of the Compose network (`docker network inspect calon_default` — or
+`<project>_default` for a second instance on the host — the
 `Gateway` field). **Never set it to `*`**: that trusts whatever a visitor writes into the
 header, and each guess could claim a new address. Left at the default (`127.0.0.1`), every
 visitor behind the proxy shares one counter — still a hard cap on guessing, but someone

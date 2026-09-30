@@ -30,7 +30,7 @@ from calon.db import Database
 from calon.models import BookingIntent, ResourceRow
 from calon.services import booking_service, repository
 
-__all__ = ["perform_write_back", "resolve_resource_slug"]
+__all__ = ["perform_calendar_removal", "perform_write_back", "resolve_resource_slug"]
 
 log = logging.getLogger("calon.api.writeback")
 
@@ -125,3 +125,63 @@ def perform_write_back(
         )
 
     return synced
+
+
+def perform_calendar_removal(
+    database: Database,
+    calendar_registry: CalendarProviderRegistry,
+    *,
+    booking: booking_service.CancelledBooking,
+    now: datetime,
+) -> bool | None:
+    """Remove a just-cancelled booking's event from the resource's calendar (ADR 0020).
+
+    The counterpart of :func:`perform_write_back`, with the same shape: it runs after the
+    cancellation has committed, a provider failure is logged and audited
+    (``booking.calendar_remove_failed``) but never undoes the cancellation, and a resource
+    with no writable provider is a silent no-op. Returns ``None`` when there was nothing
+    to remove, ``True`` on success, ``False`` on a failed removal.
+    """
+    if booking.already_cancelled or booking.ics_uid is None:
+        return None
+    if not calendar_registry.writes_back(booking.resource_slug):
+        return None
+
+    provider_event = CalendarProviderEvent(
+        uid=booking.ics_uid,
+        summary="",
+        starts_at_utc=booking.start_utc,
+        ends_at_utc=booking.end_utc,
+    )
+
+    removed = True
+    provider_error: str | None = None
+    try:
+        calendar_registry.remove_event(booking.resource_slug, provider_event)
+    except CalendarProviderError as exc:
+        log.warning(
+            "calendar removal degraded for booking %r: %s",
+            booking.id,
+            exc,
+            exc_info=exc,
+        )
+        removed = False
+        provider_error = str(exc)
+
+    with database.write() as session:
+        repository.append_audit(
+            session,
+            at=now,
+            actor="system",
+            event_type=(
+                "booking.calendar_removed" if removed else "booking.calendar_remove_failed"
+            ),
+            intent_id=booking.intent_id,
+            booking_id=booking.id,
+            payload={
+                "uid": booking.ics_uid,
+                "provider_error": provider_error,
+            },
+        )
+
+    return removed

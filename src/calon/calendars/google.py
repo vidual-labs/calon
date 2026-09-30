@@ -187,6 +187,20 @@ class GoogleCalendarProvider(ProviderTransport):
             create_payload["id"] = google_id
             self._request("POST", base, json_body=create_payload)
 
+    def remove_event(self, resource_slug: str, event: CalendarEvent) -> None:
+        """Delete the event :meth:`upsert_event` wrote for this booking (ADR 0020).
+
+        The event id is the same deterministic hash of ``event.uid`` the upsert used. An
+        event that is already gone — never created because its write-back failed, or
+        deleted by hand — answers ``404`` or ``410``, which is the outcome wanted.
+        """
+        url = f"{_API_BASE}/calendars/{self.calendar_id}/events/{_google_event_id(event.uid)}"
+        try:
+            self._request("DELETE", url)
+        except CalendarProviderError as exc:
+            if exc.status_code not in (404, 410):
+                raise
+
 
 def _rfc3339(moment: datetime) -> str:
     """Render an aware datetime as RFC 3339 with a ``Z`` suffix."""

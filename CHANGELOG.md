@@ -12,6 +12,18 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Added
 
+- **Cancel a booking from the operator dashboard.** Each accepted booking has a *Cancel
+  booking* link. Cancelling frees the time straight away, so it can be booked again, and
+  removes the event from a connected Google or Microsoft 365 calendar. The booking stays in
+  the list as *Cancelled*, and the requester is not notified — tell them yourself. If the
+  calendar cannot be reached, the booking is still cancelled and the dashboard shows
+  *Removal failed* with the reason.
+- **Run several calon instances on one server.** Give each extra instance its own checkout
+  and set `COMPOSE_PROJECT_NAME` and `CALON_HOST_PORT` in its `.env`; each then gets its
+  own container, image, and database, and is upgraded on its own. Previously a second
+  checkout replaced the first instance's container and shared its database. An existing
+  single instance needs no change and keeps its data. See "Several instances on one host"
+  in `docs/self-hosting.md`.
 - The operator dashboard shows the running calon version in its footer. Public pages
   (booking form, login) do not show it.
 - **Calendar credentials are now stored encrypted.** Set `CALON_SECRET_KEY` (generate it
@@ -89,6 +101,9 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Changed
 
+- **BREAKING:** the Docker container is now named `calon-calon-1` instead of `calon`
+  (Compose's own naming, so several instances can coexist). `docker compose` commands are
+  unaffected; update any script that calls `docker exec calon` or `docker logs calon`.
 - **BREAKING:** the Calendars panel now refuses to store calendar credentials (an OAuth
   client, a Google connection, or a feed address) until `CALON_SECRET_KEY` is set, and
   says so. Calendars you already connected keep working after the upgrade; set the key
@@ -116,6 +131,8 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Fixed
 
+- The operator dashboard listed rejected booking requests as *Queued*. They now show as
+  *Rejected*.
 - Bookings from an OpenFlow **Date & Timeslot** field connected to calon were rejected
   with a 400 and never booked. The field submits its answer as `2026-09-02 09:30
   Europe/Berlin`, which the OpenFlow intake could not read; it now accepts that format,

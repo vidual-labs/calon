@@ -45,6 +45,7 @@ import httpx
 
 from calon.calendars import (
     CalendarEvent,
+    CalendarProviderError,
     FreeBusySpan,
 )
 from calon.calendars.oauth import (
@@ -159,6 +160,22 @@ class MicrosoftGraphProvider(ProviderTransport):
             self._request("PATCH", patch_url, json_body=payload)
         else:
             self._request("POST", f"{_GRAPH_BASE}/users/{self.user}/events", json_body=payload)
+
+    def remove_event(self, resource_slug: str, event: CalendarEvent) -> None:
+        """Delete the event carrying ``event.uid`` on its own day (ADR 0020).
+
+        Found the same way :meth:`upsert_event` finds it. No matching event — never
+        written, or already deleted — is the outcome wanted, not an error, and neither is
+        a ``404`` from a delete racing someone removing it by hand.
+        """
+        existing_id = self._find_event_id_by_uid(event.uid, event.starts_at_utc)
+        if existing_id is None:
+            return
+        try:
+            self._request("DELETE", f"{_GRAPH_BASE}/users/{self.user}/events/{existing_id}")
+        except CalendarProviderError as exc:
+            if exc.status_code != 404:
+                raise
 
     def _find_event_id_by_uid(self, uid: str, when_utc: datetime) -> str | None:
         """The id of the event carrying ``iCalUID == uid`` on ``when_utc``'s day, else None.
