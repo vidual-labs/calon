@@ -34,12 +34,33 @@ from calon.models import Booking, BookingIntent, ResourceRow
 from calon.schemas import BookingIntentIn, DecisionOut
 from calon.services import repository
 
-__all__ = ["AcceptedBooking", "CancelledBooking", "Submission", "cancel_booking", "submit_intent"]
+__all__ = [
+    "AcceptedBooking",
+    "CancelledBooking",
+    "InstantOutOfRangeError",
+    "Submission",
+    "cancel_booking",
+    "submit_intent",
+]
 
 #: How far either side of the interesting range to load bookings and blackouts. The daily
 #: limit rule counts everything on a candidate's *local* day, which can reach a day beyond
 #: the range in either direction once timezones are involved.
 _MARGIN = timedelta(days=1)
+
+
+class InstantOutOfRangeError(ValueError):
+    """The request names an instant too close to year 1 or year 9999 to reason about.
+
+    Judging a request needs headroom either side of it: the default duration, the buffers,
+    and the window of bookings the decision is checked against all reach past the request
+    itself. Within a day or so of the calendar's limits there is none, and the date
+    arithmetic overflows. Such a request is malformed rather than unbookable, so callers
+    answer it like any other malformed payload and it never becomes an intent.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("The requested time is outside the range calon can work with.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +208,9 @@ def submit_intent(
     function) handles the replay path — that is where the stored response is read back
     and returned. This function is happy to be called twice with the same key; it is the
     route's job to detect that and short-circuit to the stored outcome instead.
+
+    Raises :class:`InstantOutOfRangeError`, before anything is written, for a request
+    whose instants sit too close to the calendar's limits to be judged.
     """
     resource_row = repository.find_resource(session, intent.resource_slug)
     known_row = resource_row or repository.any_resource(session)
@@ -199,10 +223,16 @@ def submit_intent(
     resource = repository.to_domain_resource(known_row)
     policy = repository.load_policy(session, known_row.id)
 
-    requested_start = to_utc(intent.start)
-    requested_end = (
-        to_utc(intent.end) if intent.end is not None else requested_start + policy.default_duration
-    )
+    try:
+        requested_start = to_utc(intent.start)
+        requested_end = (
+            to_utc(intent.end)
+            if intent.end is not None
+            else requested_start + policy.default_duration
+        )
+        window = _search_window(policy, now=now, start=requested_start, end=requested_end)
+    except OverflowError as exc:
+        raise InstantOutOfRangeError from exc
 
     intent_row = _record_intent(
         session,
@@ -222,7 +252,6 @@ def submit_intent(
         timezone=intent.timezone,
         end=intent.end,
     )
-    window = _search_window(policy, now=now, start=requested_start, end=requested_end)
 
     def free_busy() -> tuple[FreeBusySpan, ...]:
         if calendar_registry is None:

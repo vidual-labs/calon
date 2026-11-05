@@ -170,6 +170,20 @@ def test_post_book_invalid_date_returns_422_not_500(client: TestClient) -> None:
     assert res.text  # renders, no 500
 
 
+def test_post_book_a_date_at_the_edge_of_the_calendar_returns_422_not_500(
+    client: TestClient, database: Database
+) -> None:
+    """Regression: 31 December 9999 answered 500, from date arithmetic past year 9999."""
+    from calon.models import BookingIntent
+
+    res = client.post("/book", data={**_valid_fields(), "date": "9999-12-31", "time": "23:45"})
+
+    assert res.status_code == 422
+    assert "range" in res.text
+    with database.read() as session:
+        assert session.query(BookingIntent).count() == 0
+
+
 def test_post_book_form_does_not_create_intent_on_validation_failure(
     client: TestClient, database: Database
 ) -> None:

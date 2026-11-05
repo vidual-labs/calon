@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import NEW_YORK, booking_payload
@@ -155,6 +156,25 @@ def test_bounds_without_an_offset_are_refused(client: TestClient) -> None:
     response = availability(client, **{"from": "2026-09-02T09:00:00", "to": "2026-09-02T17:00:00"})
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"from": "9999-12-31T00:00:00+00:00", "to": "9999-12-31T23:00:00+00:00"},
+        {"from": "0001-01-01T00:00:00+00:00", "to": "0001-01-02T00:00:00+00:00"},
+        {"from": WEDNESDAY_09_00, "to": WEDNESDAY_17_00, "duration_min": 10**12},
+        {"from": WEDNESDAY_09_00, "to": WEDNESDAY_17_00, "duration_min": 10**16},
+    ],
+)
+def test_a_window_at_the_edge_of_the_calendar_is_refused_not_a_server_error(
+    client: TestClient, params: dict[str, Any]
+) -> None:
+    """Regression: these answered 500, from date arithmetic running past year 1 or 9999."""
+    response = availability(client, **params)
+
+    assert response.status_code == 422, response.text
+    assert "range" in response.json()["detail"]
 
 
 def test_an_unknown_resource_is_not_found(client: TestClient) -> None:

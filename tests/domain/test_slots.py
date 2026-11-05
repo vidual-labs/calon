@@ -283,3 +283,18 @@ def test_a_window_that_has_already_passed_offers_nothing():
     )
 
     assert found == ()
+
+
+def test_a_duration_that_reaches_the_end_of_the_calendar_offers_nothing_rather_than_raising():
+    """Regression: the search added the duration to each candidate and overflowed past 9999.
+
+    A booking that long can never fit a day's window, so the honest answer is no
+    alternatives — not an ``OverflowError`` out of the domain.
+    """
+    request = make_request(at(*WEDNESDAY, 10, 0), datetime(9999, 12, 30, tzinfo=ZoneInfo("UTC")))
+
+    decision = decide(request, resource=RESOURCE, policy=make_policy(), now=NOW, existing=())
+
+    assert decision.code is DecisionCode.OUTSIDE_BUSINESS_HOURS
+    assert decision.suggestions == ()
+    assert suggestions_for(request, until=at(*WEDNESDAY, 17, 0)) == ()

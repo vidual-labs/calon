@@ -78,7 +78,9 @@ def suggest_slots(
     origin = max(now_utc + policy.min_notice, start_utc)
     horizon = now_utc + timedelta(days=policy.max_advance_days)
     finish_by = to_utc(until) if until is not None else None
-    if origin > horizon or (finish_by is not None and origin + duration > finish_by):
+    # Compared as durations rather than by adding ``duration`` to an instant: a request
+    # long enough to run past year 9999 must come back empty, not overflow.
+    if origin > horizon or (finish_by is not None and finish_by - origin < duration):
         return ()
 
     requester_tz = zone(request.timezone)
@@ -164,7 +166,7 @@ def _candidates_on(
             # the same instant as a later grid point under a label no clock ever shows.
             wall += policy.granularity
             continue
-        if candidate + duration > closes_utc or candidate > horizon:
+        if closes_utc - candidate < duration or candidate > horizon:
             return
         if candidate >= origin:
             yield candidate

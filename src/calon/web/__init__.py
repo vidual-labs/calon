@@ -291,32 +291,43 @@ async def book_form_post(
     now = utcnow()
     raw_payload = intent_in.model_dump(mode="json")
 
-    with database.write() as session:
-        submission = booking_service.submit_intent(
-            session,
-            intent_in,
-            source=native.NATIVE_SOURCE,
-            now=now,
-            raw_payload=raw_payload,
-            instance_host=settings.instance_host,
-            calendar_registry=calendar_registry,
+    try:
+        with database.write() as session:
+            submission = booking_service.submit_intent(
+                session,
+                intent_in,
+                source=native.NATIVE_SOURCE,
+                now=now,
+                raw_payload=raw_payload,
+                instance_host=settings.instance_host,
+                calendar_registry=calendar_registry,
+            )
+            success_ctx = None
+            intent_row = None
+            if submission.booking is not None:
+                booking_row = session.get(Booking, submission.booking.id)
+                intent_row = session.get(BookingIntent, submission.intent_id)
+                if booking_row and intent_row:
+                    handoff = _build_handoff_for_form(booking_row, intent_row, settings)
+                    success_ctx = {
+                        "start": submission.booking.start_utc.astimezone(zone).strftime(
+                            "%a %d %b %Y %H:%M"
+                        ),
+                        "end": submission.booking.end_utc.astimezone(zone).strftime("%H:%M"),
+                        "timezone": resource_tz,
+                        "booking_id": submission.booking.id,
+                        "handoff": handoff,
+                    }
+    except booking_service.InstantOutOfRangeError as exc:
+        # The raise left the write block, so the transaction rolled back: like any other
+        # malformed input, the request never becomes an intent.
+        errors.append(str(exc))
+        return templates.TemplateResponse(
+            request=request,
+            name="book.html",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context=_book_ctx(request, form=form_data, errors=errors),
         )
-        success_ctx = None
-        intent_row = None
-        if submission.booking is not None:
-            booking_row = session.get(Booking, submission.booking.id)
-            intent_row = session.get(BookingIntent, submission.intent_id)
-            if booking_row and intent_row:
-                handoff = _build_handoff_for_form(booking_row, intent_row, settings)
-                success_ctx = {
-                    "start": submission.booking.start_utc.astimezone(zone).strftime(
-                        "%a %d %b %Y %H:%M"
-                    ),
-                    "end": submission.booking.end_utc.astimezone(zone).strftime("%H:%M"),
-                    "timezone": resource_tz,
-                    "booking_id": submission.booking.id,
-                    "handoff": handoff,
-                }
 
     # Post-commit write-back (ADR 0009), outside the transaction: the provider is a
     # network hop and a failing provider must not hold the DB lock or roll the

@@ -138,6 +138,10 @@ per user-visible change, describing the effect rather than the implementation.
   happen (02:00-02:59) were offered as slots, duplicating the 03:00 ones. Every slot now
   lasts exactly its duration, and skipped times are not offered. Windows that do not
   include 02:00-03:00, like the default 09:00-17:00, were never affected.
+- A booking request or availability query for a time at the very edge of the calendar
+  (31 December 9999, 1 January 0001), or with an absurdly long `duration_min`, crashed with
+  a 500 error. It is now refused as malformed: `422` from the API and the booking form,
+  `400` from external intake, and nothing is recorded.
 - The operator dashboard listed rejected booking requests as *Queued*. They now show as
   *Rejected*.
 - Bookings from an OpenFlow **Date & Timeslot** field connected to calon were rejected

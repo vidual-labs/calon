@@ -44,7 +44,10 @@ The model rejects unknown top-level fields, a `start` or `end` without a UTC off
 `timezone` that is not in the IANA database. All three are malformed rather than unbookable:
 they are answered with `422` and never become an intent, which keeps the audit log a record
 of real booking attempts rather than of typos. `DecisionCode.INVALID_INPUT` remains the
-backstop for a caller that builds a `BookingRequest` directly.
+backstop for a caller that builds a `BookingRequest` directly. A `start` or `end` within
+about a day of the calendar's limits (year 1 or year 9999) is refused the same way, by the
+booking service rather than the model: there is no room on the calendar for its duration
+and the window it is judged against.
 
 ### `BookingRequest`
 

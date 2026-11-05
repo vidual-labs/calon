@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -180,6 +181,27 @@ def test_an_unrecognised_timezone_is_turned_away_at_the_edge(
     )
 
     assert response.status_code == 422
+    with database.read() as session:
+        assert session.scalars(select(BookingIntent)).all() == []
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("9999-12-31T23:59:00+00:00", None),  # the default duration runs off the calendar
+        ("9999-12-31T10:00:00-12:00", None),  # the search window does
+        ("2026-09-02T10:00:00+02:00", "9999-12-31T23:59:59+00:00"),
+        ("0001-01-01T00:00:00+00:00", None),
+    ],
+)
+def test_an_instant_at_the_edge_of_the_calendar_is_refused_not_a_server_error(
+    client: TestClient, database: Database, start: str, end: str | None
+) -> None:
+    """Regression: these answered 500, from date arithmetic running past year 1 or 9999."""
+    response = client.post("/api/v1/bookings", json=booking_payload(start, end))
+
+    assert response.status_code == 422, response.text
+    assert "range" in response.json()["detail"]
     with database.read() as session:
         assert session.scalars(select(BookingIntent)).all() == []
 

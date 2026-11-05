@@ -172,6 +172,16 @@ def test_a_date_timeslot_answer_is_accepted(boot_with_openflow: TestClient) -> N
     assert data["booking"]["start"] == "2026-09-01T10:00:00+02:00"
 
 
+def test_an_answer_at_the_edge_of_the_calendar_is_a_400_not_a_500(
+    boot_with_openflow: TestClient,
+) -> None:
+    """Regression: an answer of 31 December 9999 answered 500 from date arithmetic."""
+    body = json.dumps(_payload(start="9999-12-31 23:45 Europe/Berlin")).encode("utf-8")
+    r = boot_with_openflow.post("/api/v1/openflow", content=body, headers=_signed_headers(body))
+    assert r.status_code == 400, r.text
+    assert "range" in r.json()["detail"]
+
+
 def test_openflow_booking_is_written_to_the_database(
     boot_with_openflow: TestClient,
     database: Database,
