@@ -131,6 +131,13 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Fixed
 
+- On the night the clocks go back, a resource whose booking window covers 02:00-03:00
+  was offered slots that ran an hour too long (a 60-minute slot from 02:00 summer time
+  ended at 03:00 winter time, two real hours later), and booking one through a suggestion
+  judged it as a two-hour booking. On the night the clocks go forward, times that never
+  happen (02:00-02:59) were offered as slots, duplicating the 03:00 ones. Every slot now
+  lasts exactly its duration, and skipped times are not offered. Windows that do not
+  include 02:00-03:00, like the default 09:00-17:00, were never affected.
 - The operator dashboard listed rejected booking requests as *Queued*. They now show as
   *Rejected*.
 - Bookings from an OpenFlow **Date & Timeslot** field connected to calon were rejected

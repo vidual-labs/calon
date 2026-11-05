@@ -12,7 +12,7 @@ weekdays only and the transition falls on a Sunday.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -80,3 +80,38 @@ def test_the_day_before_the_transition_is_an_hour_offset_from_the_day_after(boot
 
     assert bookings[0].start_utc == datetime(2026, 10, 24, 8, 0, tzinfo=UTC)
     assert bookings[1].start_utc == datetime(2026, 10, 25, 9, 0, tzinfo=UTC)
+
+
+OPEN_AROUND_THE_CLOCK = """
+[availability]
+allowed_weekdays = [0, 1, 2, 3, 4, 5, 6]
+window_start = "00:00"
+window_end = "23:00"
+default_duration_min = 60
+slot_granularity_min = 30
+min_notice_min = 0
+buffer_after_min = 0
+"""
+
+
+def test_slots_across_the_fall_back_hour_last_exactly_the_requested_duration(
+    boot: BootFn,
+) -> None:
+    """Regression: 02:00 CEST was offered as a slot ending 03:00 CET, two real hours."""
+    with boot(OPEN_AROUND_THE_CLOCK) as client:
+        response = client.get(
+            "/api/v1/availability",
+            params={
+                "resource_slug": "default",
+                "from": "2026-10-25T00:00:00+02:00",
+                "to": "2026-10-25T04:00:00+01:00",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    slots = response.json()["slots"]
+    assert slots
+    for slot in slots:
+        start = datetime.fromisoformat(slot["start"])
+        end = datetime.fromisoformat(slot["end"])
+        assert end.astimezone(UTC) - start.astimezone(UTC) == timedelta(minutes=60), slot

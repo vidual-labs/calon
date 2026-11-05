@@ -138,7 +138,10 @@ pass the complete rule chain, stopping at the `max_advance_days` horizon.
 `timezone` is the **requester's**, and `start` and `end` are expressed in it, so a
 suggestion can be rendered without a further conversion. The grid is anchored to each day's
 `window_start` and stepped in local wall-clock time, so slots keep their alignment across a
-DST transition instead of drifting by an hour.
+DST transition instead of drifting by an hour. A slot's length is always elapsed time, so a
+slot that spans a transition still lasts exactly its duration. A wall-clock time the
+spring-forward gap skips is never offered; on the fall-back date each wall-clock time is
+offered once, at its first occurrence.
 
 Each candidate is re-checked against the *complete* chain rather than a cheaper subset. A
 suggestion that turns out to sit inside a blackout, or on top of another booking's buffer,

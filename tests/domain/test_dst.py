@@ -113,3 +113,67 @@ def test_a_booking_on_the_fall_back_date_is_judged_on_instants():
 
     assert decision.accepted
     assert at(*FALL_BACK, 10, 0).astimezone(UTC).hour == 9  # CET by then
+
+
+def test_a_slot_offered_on_the_fall_back_date_lasts_exactly_the_requested_duration():
+    """02:00 CEST plus an hour is 02:00 CET, not 03:00 CET two real hours later.
+
+    Regression: the slot search added the duration to the local wall clock, so a candidate
+    starting in the hour before the clocks went back was offered with an end two real
+    hours after its start — and judged as a two-hour booking.
+    """
+    policy = make_open_policy(default_duration_min=60)
+    request = make_request(at(*FALL_BACK, 0, 0), at(*FALL_BACK, 1, 0))
+    now = at(2026, 10, 24, 8, 0)
+
+    found = suggest_slots(
+        request,
+        resource=RESOURCE,
+        policy=policy,
+        now=now,
+        existing=(),
+        limit=20,
+        until=datetime(2026, 10, 25, 5, 0, tzinfo=UTC),
+    )
+
+    assert found
+    # Compared in UTC: subtracting two datetimes that share a tzinfo measures wall-clock
+    # time, which is exactly the mistake this test is about.
+    assert all(
+        slot.end.astimezone(UTC) - slot.start.astimezone(UTC) == policy.default_duration
+        for slot in found
+    )
+
+
+def test_a_wall_clock_time_skipped_by_spring_forward_is_never_offered():
+    """02:00-02:59 does not happen on 29 March, so no slot may start there.
+
+    Regression: the grid emitted 02:00 as "02:00+01:00", which is the same instant as the
+    03:00 CEST slot after it, so the same moment was offered twice under two labels.
+    """
+    policy = make_open_policy(default_duration_min=30)
+    request = make_request(at(*SPRING_FORWARD, 1, 0), at(*SPRING_FORWARD, 1, 30))
+    now = at(2026, 3, 27, 8, 0)
+
+    found = suggest_slots(
+        request,
+        resource=RESOURCE,
+        policy=policy,
+        now=now,
+        existing=(),
+        limit=20,
+        until=datetime(2026, 3, 29, 3, 0, tzinfo=UTC),  # 05:00 CEST
+    )
+
+    instants = [slot.start.astimezone(UTC) for slot in found]
+    assert len(instants) == len(set(instants)), "the same instant was offered twice"
+    local = [instant.astimezone(ZoneInfo(BERLIN)).strftime("%H:%M") for instant in instants]
+    assert local == [
+        "01:00", "01:15", "01:30", "01:45",
+        "03:00", "03:15", "03:30", "03:45",
+        "04:00", "04:15", "04:30",
+    ]  # fmt: skip
+    assert all(
+        slot.end.astimezone(UTC) - slot.start.astimezone(UTC) == policy.default_duration
+        for slot in found
+    )
