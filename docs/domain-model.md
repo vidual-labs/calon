@@ -239,12 +239,12 @@ intake framework lands — adding a unique constraint later, against live data t
 already violate it, is a far worse migration than adding it up front.
 
 `decision_json` (added by migration 0002) stores the complete structured decision —
-`code`, `reason`, and `suggestions` — at the instant it is produced, for external-intake
-submissions. On an idempotent replay the route returns **this** value (re-validated into the
-public `DecisionOut` shape) rather than re-evaluating the rules, so a retry cannot change a
-stored outcome. Native submissions always write `NULL` here, because the native form has no
-replay semantics; their decision stays in the human-readable `decision_code` /
-`decision_reason` columns. See [ADR 0012](adr/0012-external-intake-final.md).
+`code`, `reason`, and `suggestions` — at the instant it is produced, for every submission.
+On an external-intake idempotent replay the route returns **this** value (re-validated into
+the public `DecisionOut` shape) rather than re-evaluating the rules, so a retry cannot change
+a stored outcome. Native submissions write it too, although the native API has no replay
+semantics; it stays `NULL` only for intents recorded before migration 0002. See
+[ADR 0012](adr/0012-external-intake-final.md).
 
 ### `booking`
 

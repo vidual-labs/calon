@@ -2,7 +2,7 @@
 
 Pure module: no I/O, no database, no framework import, no wall clock — ``now`` is always
 a parameter, the same rule that ``calon.domain`` obeys (``CLAUDE.md`` §4.1). A caller at
-the I/O edge (the ``/api/v1/intake/{source_slug}`` route) supplies the raw request body,
+the I/O edge (the ``/api/v1/{source_slug}`` route) supplies the raw request body,
 the request headers, the per-source secret, and the current instant, and gets either a
 canonical booking intent or a raised :class:`IntakeAuthError`.
 

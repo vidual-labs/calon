@@ -1,4 +1,4 @@
-"""POST /api/v1/intake/{source_slug} — the one endpoint every external source submits to.
+"""POST /api/v1/{source_slug} — the one endpoint every external source submits to.
 
 The flow (``docs/external-intake.md``, ADR 0005):
 

@@ -1,7 +1,7 @@
 """The adapter contract and the framework it plugs into.
 
 ADR 0005's two-method contract lives here, together with the registry that hands one
-adapter to the ``/api/v1/intake/{source_slug}`` route. The contract is what keeps "there
+adapter to the ``/api/v1/{source_slug}`` route. The contract is what keeps "there
 is exactly one downstream code path" testable: native intake is one adapter among the
 others, and an external source cannot reach logic the native flow does not also exercise.
 

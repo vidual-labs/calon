@@ -22,26 +22,24 @@ This is a two-layer design:
 
 ## The `CalendarHandoff` schema
 
-Returned in the accept response and rendered on the result page.
+Returned in the accept response as `booking.calendar`, and rendered on the result page.
 
 ```
-event:
-  uid: str                # "<booking_id>@<CALON_INSTANCE_HOST>"
-  sequence: int           # starts at 0, increments on amendment
-  title: str
-  description: str
-  location: str | None
-  start_utc: datetime
-  end_utc: datetime
-  timezone: str           # for display
-  organizer: {name, email} | None
-ics_url: str              # "/api/v1/bookings/{id}/calendar.ics"
+ics_url: str              # "<CALON_BASE_URL>/api/v1/bookings/{id}/calendar.ics" (operator login)
 ics_filename: str         # "calon-<booking_id>.ics"
+uid: str                  # "<booking_id>@<CALON_INSTANCE_HOST>"
+sequence: int             # starts at 0, increments on amendment
 links:
   google: str
   outlook_office: str     # Microsoft 365 / work accounts
   outlook_live: str       # Outlook.com / personal accounts
 ```
+
+The event itself is built from the booking and its intent: the title is the request's
+`subject`, the description its `notes` (empty when there are none), and the times are the
+booking's own span, without buffers. The `[calendar]` block of `config/calon.toml`
+(`event_title`, `location`, `organizer_*`) is read at startup but not yet applied to the
+event.
 
 ## ICS output
 
@@ -58,8 +56,8 @@ UID:0192f3c1-...@calon.example.com
 DTSTAMP:20260901T120000Z
 DTSTART:20260903T090000Z
 DTEND:20260903T093000Z
-SUMMARY:Consultation with Alex Rivera
-DESCRIPTION:Booked via calon.
+SUMMARY:Initial consultation
+DESCRIPTION:Looking forward to it.
 STATUS:CONFIRMED
 SEQUENCE:0
 END:VEVENT
