@@ -142,6 +142,13 @@ per user-visible change, describing the effect rather than the implementation.
   (31 December 9999, 1 January 0001), or with an absurdly long `duration_min`, crashed with
   a 500 error. It is now refused as malformed: `422` from the API and the booking form,
   `400` from external intake, and nothing is recorded.
+- **OpenFlow webhook intake lost bookings.** When two people picked the same time on the
+  same OpenFlow form, the second request was treated as a retry of the first: it was
+  answered with the first person's booking, as if it had been accepted, and never
+  recorded. Each submission is now told apart by its answers, so the second person is
+  judged (and normally refused, because the slot is taken) and shows up in the dashboard.
+  A genuine delivery retry of the same submission is still answered with the stored
+  decision.
 - The operator dashboard listed rejected booking requests as *Queued*. They now show as
   *Rejected*.
 - Bookings from an OpenFlow **Date & Timeslot** field connected to calon were rejected

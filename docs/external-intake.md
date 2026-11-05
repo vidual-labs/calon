@@ -147,6 +147,12 @@ carries the canonical `X-Calon-*` headers is verified by that scheme instead (ca
 takes precedence), so an OpenFlow caller can opt into the stronger, headered scheme at
 any time. The adapter translates only: it never accepts, rejects, or books.
 
+OpenFlow's webhook carries no submission id, and its `timestamp` is that of the delivery
+attempt, so the adapter's `source_ref` (the idempotency key, unless an `Idempotency-Key`
+header is sent) is `of:<formId>:<start answer>:<digest>`, where the digest covers the
+submission's whole `data` object. A delivery retry re-sends the same answers and is
+replayed; a different respondent picking the same time is judged on its own.
+
 The mapped `start`/`end` answers may be ISO-8601 (`2026-09-02T09:30:00+02:00`, or naive
 and read in the mapping's `timezone`) or the plain text OpenFlow's *Date & Timeslot* field
 submits: `2026-09-02 09:30`, optionally followed by an IANA zone
