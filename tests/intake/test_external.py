@@ -124,6 +124,23 @@ class TestHmacSourceAdapter:
         with pytest.raises(IntakeParseError, match="subject"):
             adapter.parse(make_request(body=json.dumps(payload)))
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("timezone", "Mars/Olympus_Mons"),
+            ("start", "2026-09-02T10:00:00"),  # no offset
+            ("start", "not a time"),
+        ],
+    )
+    def test_a_payload_the_schema_refuses_is_a_parse_error(self, field: str, value: str) -> None:
+        # Regression: the schema's ValidationError escaped parse(), and the route — which
+        # turns only IntakeParseError into a 400 — answered 500.
+        adapter = HmacSourceAdapter("test-source", secret=SECRET)
+        payload = json.loads(make_request().raw_body)
+        payload[field] = value
+        with pytest.raises(IntakeParseError, match=field):
+            adapter.parse(make_request(body=json.dumps(payload)))
+
     def test_unmappable_fields_go_to_metadata_not_a_new_column(self) -> None:
         adapter = HmacSourceAdapter("test-source", secret=SECRET)
         body = make_request().raw_body

@@ -149,6 +149,9 @@ per user-visible change, describing the effect rather than the implementation.
   judged (and normally refused, because the slot is taken) and shows up in the dashboard.
   A genuine delivery retry of the same submission is still answered with the stored
   decision.
+- An external source built on calon's generic signed-request adapter got a 500 error,
+  instead of a 400, for a payload with an unknown timezone or a start time without an
+  offset. (The shipped OpenFlow adapter was not affected.)
 - The operator dashboard listed rejected booking requests as *Queued*. They now show as
   *Rejected*.
 - Bookings from an OpenFlow **Date & Timeslot** field connected to calon were rejected

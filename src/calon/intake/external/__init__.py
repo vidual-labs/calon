@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from calon.config import SourceConfig as OperatorSourceConfig
     from calon.intake.signature import SourceConfig as SignatureSourceConfig
 
+from pydantic import ValidationError
+
 from calon.intake.signature import (
     IntakeParseError,
     verify_signature,
@@ -140,6 +142,18 @@ class HmacSourceAdapter:
             )
         except KeyError as exc:
             raise IntakeParseError(f"missing required field: {exc.args[0]!r}") from exc
+        except ValidationError as exc:
+            # The route turns only IntakeParseError into a 400, so a payload the canonical
+            # schema refuses (an unknown timezone, a start without an offset) must leave
+            # through it too, rather than escape as a 500.
+            raise IntakeParseError(
+                f"the payload does not fit the booking schema ({_fields_of(exc)})"
+            ) from exc
+
+
+def _fields_of(exc: ValidationError) -> str:
+    """The dotted names of the fields a validation error is about, for the 400 body."""
+    return ", ".join(".".join(str(part) for part in error["loc"]) for error in exc.errors())
 
 
 class SourceRegistry:
