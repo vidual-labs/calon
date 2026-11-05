@@ -152,6 +152,9 @@ per user-visible change, describing the effect rather than the implementation.
 - An external source built on calon's generic signed-request adapter got a 500 error,
   instead of a 400, for a payload with an unknown timezone or a start time without an
   offset. (The shipped OpenFlow adapter was not affected.)
+- A misspelt `[instance] timezone` in `config/calon.toml` was accepted silently, unlike
+  every other setting. calon now refuses to start and names it, as it already did for
+  `[resource] timezone`.
 - The operator dashboard listed rejected booking requests as *Queued*. They now show as
   *Rejected*.
 - Bookings from an OpenFlow **Date & Timeslot** field connected to calon were rejected
