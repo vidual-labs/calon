@@ -22,9 +22,10 @@ Two things differ from :class:`HmacSourceAdapter`, and both are deliberate:
   from a field id to one of the canonical intent's slots (``start`` / ``end`` /
   ``name`` / ``email`` / ``phone`` / ``subject``) lives in the operator config —
   ``[sources.openflow.fields.<id>]`` — and is passed to the adapter as an already-
-  parsed :class:`OpenFlowFieldMapping`. The idempotency key is derived from
-  ``formId + start answer`` so a delivery-queue retry (same form, same answer) is
-  replayed, not double-booked.
+  parsed :class:`OpenFlowFieldMapping`. The idempotency key is derived from the
+  ``formId``, the start answer and a digest of the whole ``data`` object, so a
+  delivery-queue retry (the same submission sent again) is replayed, not
+  double-booked, while a different respondent picking the same time is judged.
 
 See ``docs/external-intake.md`` (the "About OpenFlow specifically" section) and ADR
 0013 for the decision record.
@@ -79,10 +80,13 @@ OPENFLOW_SIGNATURE_HEADER = "X-OpenFlow-Signature"
 #: only the payload's field — so the window is anchored on the instance's side.
 OPENFLOW_CLOCK_WINDOW = timedelta(minutes=4)
 
-#: The prefix the idempotency key is built from. ``of:<formId>:<answer>`` is unique
-#: per (form, answer) and lets a delivery-queue retry (same form, same answer) be
-#: recognised as the same logical request. Two different forms that both ask for the
-#: same instant are *different* logical requests and must be evaluated freshly.
+#: The prefix the idempotency key is built from: ``of:<formId>:<start answer>:<digest>``,
+#: where the digest covers the submission's whole ``data`` object. OpenFlow's webhook
+#: carries no submission id, and its ``timestamp`` is the delivery attempt's, so the
+#: answers themselves are what identify one submission: a delivery-queue retry re-sends
+#: the same answers and is recognised as the same logical request, while two
+#: respondents (or two forms) asking for the same instant are different requests and
+#: must each be evaluated.
 FIELD_KEY_PREFIX = "of:"
 
 #: The field-id keys the operator config uses under ``[sources.openflow.fields.<id>]``.
@@ -267,7 +271,8 @@ class OpenFlowAdapter:
         """Translate an OpenFlow submission into the canonical booking intent.
 
         The mapping is keyed by ``formId`` (one :class:`OpenFlowFieldMapping` per form).
-        The idempotency key is ``of:<formId>:<start answer>`` (the plan's decision 3);
+        The idempotency key is ``of:<formId>:<start answer>:<digest of data>`` (see
+        :data:`FIELD_KEY_PREFIX`);
         the ``metadata`` map carries the provider's own shape, untouched (decision 4).
         """
         payload = _load_payload(request.raw_body)
@@ -358,11 +363,11 @@ class OpenFlowAdapter:
         }
         metadata["timestamp_utc"] = _coerce_timestamp(payload.get("timestamp"))
 
-        # The idempotency key is derived from the form id and the *start* answer:
-        # a delivery-queue retry (same form, same answer) resolves to the same key.
-        # The name/email are intentionally left out so a corrected re-submit gets a
-        # fresh evaluation, not a replay of someone else's rejection.
-        source_ref = f"{FIELD_KEY_PREFIX}{form_id}:{start_raw}"
+        # The idempotency key identifies one *submission*: a delivery-queue retry sends
+        # the same answers and resolves to the same key, while anyone else asking for the
+        # same time on the same form — or the same person correcting an answer — gets a
+        # fresh evaluation instead of a replay of someone else's decision.
+        source_ref = f"{FIELD_KEY_PREFIX}{form_id}:{start_raw}:{_answers_digest(data)}"
 
         # Construct inside a guard so a schema-level failure (an implausible
         # email, an unrecognised IANA zone, ...) surfaces as an ``IntakeParseError``
@@ -419,6 +424,18 @@ def _local_instant(raw: str, tz: ZoneInfo) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=answer_tz)
     return parsed.astimezone(tz)
+
+
+def _answers_digest(data: dict[str, Any]) -> str:
+    """A short, stable digest of a submission's answers, for its idempotency key.
+
+    Key order and whitespace are normalised, so the same answers re-serialised by a retry
+    hash the same. Sixteen hex characters (64 bits) keep the key well inside
+    ``source_ref``'s length limit while making an accidental collision between two
+    submissions negligible.
+    """
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def _hget(headers: Mapping[str, str], name: str) -> str | None:

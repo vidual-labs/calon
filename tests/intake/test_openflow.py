@@ -21,8 +21,9 @@ Three things are tested that the generic framework already covers elsewhere:
   field id is ``start`` or ``email`` lives in the operator config
   (``[sources.openflow.fields.<formId>]``), one :class:`OpenFlowFieldMapping` per form.
   The adapter is handed the already-parsed mapping keyed by *form id*.
-* **The idempotency key.** It is ``of:<formId>:<start answer>``, so an OpenFlow
-  delivery-queue retry (same form, same answer) is replayed as one logical request.
+* **The idempotency key.** It is ``of:<formId>:<start answer>:<digest of data>``, so an
+  OpenFlow delivery-queue retry (the same submission sent again) is replayed as one
+  logical request, while another respondent asking for the same time is not.
 """
 
 from __future__ import annotations
@@ -384,8 +385,8 @@ class TestParseFixture:
         assert intent.requester.email == "ada@example.com"
         assert intent.requester.phone == "+49 151 2345678"
         assert intent.subject == "Consultation booking: Ada Lovelace"  # formTitle: name
-        # source_ref = "of:<formId>:<start answer>"
-        assert intent.source_ref == "of:of_form_001:2026-09-01T10:00:00+02:00"
+        # source_ref = "of:<formId>:<start answer>:<digest of data>"
+        assert _key_without_digest(intent.source_ref) == "of:of_form_001:2026-09-01T10:00:00+02:00"
         # metadata: the provider's shape, untouched.
         assert set(intent.metadata) == {
             "event",
@@ -420,7 +421,7 @@ class TestParseFixture:
 
         assert intent.requester.phone is None
         assert intent.end is None  # the resource's default duration applies downstream
-        assert intent.source_ref == "of:of_form_001:2026-09-01T07:00:00+02:00"
+        assert _key_without_digest(intent.source_ref) == "of:of_form_001:2026-09-01T07:00:00+02:00"
 
     def test_an_unmapped_form_is_a_parse_error(self, fixture: dict[str, Any]) -> None:
         field_mapping = fixture["mapping"]["of_form_001"]
@@ -443,7 +444,7 @@ class TestParseFixture:
 
     def test_a_replayed_variant_is_replayable_by_its_own_key(self, fixture: dict[str, Any]) -> None:
         # ``replay`` reuses of_form_002 (a *different* form), so its idempotency key
-        # differs from ``accept``'s — a replay is per (formId, start answer).
+        # differs from ``accept``'s — a replay is per submission, and so per form.
         adapter = OpenFlowAdapter(
             secret=fixture["secret"],
             field_mappings={
@@ -459,7 +460,7 @@ class TestParseFixture:
         body = _payload_bytes(fixture, "replay")
         request = IntakeRequest(source_slug="openflow", raw_body=body, headers={})
         intent = adapter.parse(request)
-        assert intent.source_ref == "of:of_form_002:2026-09-01T10:00:00+02:00"
+        assert _key_without_digest(intent.source_ref) == "of:of_form_002:2026-09-01T10:00:00+02:00"
 
 
 class TestParseEdgeCases:
@@ -634,10 +635,50 @@ class TestParseEdgeCases:
         i1 = adapter.parse(r1)
         i2 = adapter.parse(r2)
         assert i1.source_ref is not None and i2.source_ref is not None
-        assert i1.source_ref == f"{FIELD_KEY_PREFIX}{FORM_ID}:2026-09-01T11:00:00+02:00"
-        assert i1.source_ref == "of:af-test-form:2026-09-01T11:00:00+02:00"
-        assert i2.source_ref.endswith("12:00:00+02:00")
+        assert _key_without_digest(i1.source_ref) == (
+            f"{FIELD_KEY_PREFIX}{FORM_ID}:2026-09-01T11:00:00+02:00"
+        )
+        assert _key_without_digest(i1.source_ref) == "of:af-test-form:2026-09-01T11:00:00+02:00"
+        assert _key_without_digest(i2.source_ref).endswith("12:00:00+02:00")
         assert i1.source_ref != i2.source_ref  # different answers → different keys
+
+    def test_the_same_submission_sent_again_resolves_to_the_same_key(self) -> None:
+        adapter = _adapter()
+        first = adapter.parse(_signed_shim_request(start="2026-09-01T11:00:00+02:00"))
+        # OpenFlow's delivery queue re-sends the same answers under a fresh timestamp.
+        retry = adapter.parse(
+            _signed_shim_request(
+                start="2026-09-01T11:00:00+02:00", timestamp="2026-09-01T07:05:00.000Z"
+            )
+        )
+        assert first.source_ref == retry.source_ref
+
+    def test_another_respondent_for_the_same_slot_gets_a_different_key(self) -> None:
+        # Regression: the key was formId + start answer only, so a second person picking
+        # the same time on the same form was answered with a replay of the first.
+        adapter = _adapter()
+        ada = adapter.parse(
+            _signed_shim_request(
+                start="2026-09-01T11:00:00+02:00", name="Ada", email="a@example.com"
+            )
+        )
+        grace = adapter.parse(
+            _signed_shim_request(
+                start="2026-09-01T11:00:00+02:00", name="Grace", email="g@example.com"
+            )
+        )
+        assert ada.source_ref != grace.source_ref
+
+
+def _key_without_digest(source_ref: str | None) -> str:
+    """The readable part of an OpenFlow idempotency key, with its answers digest checked.
+
+    The key is ``of:<formId>:<start answer>:<digest>``; the digest is 16 hex characters.
+    """
+    assert source_ref is not None
+    head, _, digest = source_ref.rpartition(":")
+    assert len(digest) == 16 and all(c in "0123456789abcdef" for c in digest), source_ref
+    return head
 
 
 __all__ = [

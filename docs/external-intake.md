@@ -1,8 +1,8 @@
 # External intake
 
-> Status: planned (phase 5). The one piece that exists is the native adapter
-> (`intake/native.py`) and the single downstream path it feeds — which is the part this
-> document is really about.
+> Status: implemented (phase 5, ADR 0012). The framework, the `POST /api/v1/{source_slug}`
+> endpoint, and the first provider adapter, OpenFlow (`0.2.0`), all ship. Sources are off
+> until the operator enables one.
 
 ## What this is for
 
@@ -19,12 +19,15 @@ additive.
 class SourceAdapter(Protocol):
     slug: str
 
-    def verify(self, headers: Mapping[str, str], body: bytes) -> None:
-        """Raise if the request is not authentic."""
+    def verify(self, request: IntakeRequest, *, now: datetime) -> None:
+        """Raise IntakeAuthError if the request is not authentic."""
 
-    def parse(self, payload: dict) -> BookingIntentIn:
-        """Map a provider payload onto calon's canonical booking intent."""
+    def parse(self, request: IntakeRequest) -> BookingIntentIn:
+        """Map the payload onto calon's canonical booking intent; IntakeParseError if not."""
 ```
+
+`IntakeRequest` carries the source slug, the lower-cased headers, and the raw body bytes.
+`now` is supplied by the route, never read from the clock inside an adapter.
 
 Two methods, and a hard rule: **adapters translate, adapters never decide.**
 
@@ -69,6 +72,16 @@ routes — the code and the tests below follow the shipped path.)
 
 The flow is: look up the adapter by slug → `verify()` → `parse()` →
 `booking_service.submit_intent()`.
+
+Responses:
+
+| Status | When |
+| --- | --- |
+| `201` | The request was evaluated for the first time. The body is a `BookingResponse`; read `decision.outcome` — a fresh **rejection** is also answered `201` (unlike `POST /api/v1/bookings`, which answers a rejection with `200`), because an intent was recorded either way. |
+| `200` + `Idempotent-Replay: true` | A retry: the stored original `BookingResponse`, not re-evaluated. |
+| `400` | The payload could not be turned into a usable intent (logged `intake.rejected_parse`). |
+| `401` | Bad or missing signature, or a timestamp outside the window. |
+| `404` | No enabled source with that slug. The body is the same for every such slug. |
 
 ### Authentication
 
@@ -146,6 +159,12 @@ so the scheduling core sees it exactly like a native request. A request that als
 carries the canonical `X-Calon-*` headers is verified by that scheme instead (canonical
 takes precedence), so an OpenFlow caller can opt into the stronger, headered scheme at
 any time. The adapter translates only: it never accepts, rejects, or books.
+
+OpenFlow's webhook carries no submission id, and its `timestamp` is that of the delivery
+attempt, so the adapter's `source_ref` (the idempotency key, unless an `Idempotency-Key`
+header is sent) is `of:<formId>:<start answer>:<digest>`, where the digest covers the
+submission's whole `data` object. A delivery retry re-sends the same answers and is
+replayed; a different respondent picking the same time is judged on its own.
 
 The mapped `start`/`end` answers may be ISO-8601 (`2026-09-02T09:30:00+02:00`, or naive
 and read in the mapping's `timezone`) or the plain text OpenFlow's *Date & Timeslot* field

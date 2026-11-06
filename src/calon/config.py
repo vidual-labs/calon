@@ -33,6 +33,7 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from calon.domain import AvailabilityPolicy, BlackoutPeriod, Resource
+from calon.domain.availability import zone
 
 __all__ = [
     "CalendarConfig",
@@ -490,9 +491,14 @@ def load_operator_config(path: Path | None) -> OperatorConfig:
         )
         policy = _policy(path, availability, resource_tz, defaults.policy)
 
+        instance_tz = _str(path, instance, "timezone", defaults.instance_timezone)
+        # Not read by any rule, but the file promises an IANA name here like everywhere
+        # else; accepting a typo silently would be the shrug this loader refuses.
+        zone(instance_tz)
+
         return OperatorConfig(
             instance_name=_str(path, instance, "name", defaults.instance_name),
-            instance_timezone=_str(path, instance, "timezone", defaults.instance_timezone),
+            instance_timezone=instance_tz,
             resource_name=_str(path, resource_raw, "name", defaults.resource_name),
             resource=resource,
             policy=policy,

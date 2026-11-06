@@ -131,6 +131,30 @@ per user-visible change, describing the effect rather than the implementation.
 
 ### Fixed
 
+- On the night the clocks go back, a resource whose booking window covers 02:00-03:00
+  was offered slots that ran an hour too long (a 60-minute slot from 02:00 summer time
+  ended at 03:00 winter time, two real hours later), and booking one through a suggestion
+  judged it as a two-hour booking. On the night the clocks go forward, times that never
+  happen (02:00-02:59) were offered as slots, duplicating the 03:00 ones. Every slot now
+  lasts exactly its duration, and skipped times are not offered. Windows that do not
+  include 02:00-03:00, like the default 09:00-17:00, were never affected.
+- A booking request or availability query for a time at the very edge of the calendar
+  (31 December 9999, 1 January 0001), or with an absurdly long `duration_min`, crashed with
+  a 500 error. It is now refused as malformed: `422` from the API and the booking form,
+  `400` from external intake, and nothing is recorded.
+- **OpenFlow webhook intake lost bookings.** When two people picked the same time on the
+  same OpenFlow form, the second request was treated as a retry of the first: it was
+  answered with the first person's booking, as if it had been accepted, and never
+  recorded. Each submission is now told apart by its answers, so the second person is
+  judged (and normally refused, because the slot is taken) and shows up in the dashboard.
+  A genuine delivery retry of the same submission is still answered with the stored
+  decision.
+- An external source built on calon's generic signed-request adapter got a 500 error,
+  instead of a 400, for a payload with an unknown timezone or a start time without an
+  offset. (The shipped OpenFlow adapter was not affected.)
+- A misspelt `[instance] timezone` in `config/calon.toml` was accepted silently, unlike
+  every other setting. calon now refuses to start and names it, as it already did for
+  `[resource] timezone`.
 - The operator dashboard listed rejected booking requests as *Queued*. They now show as
   *Rejected*.
 - Bookings from an OpenFlow **Date & Timeslot** field connected to calon were rejected

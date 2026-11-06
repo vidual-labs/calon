@@ -172,6 +172,16 @@ def test_a_date_timeslot_answer_is_accepted(boot_with_openflow: TestClient) -> N
     assert data["booking"]["start"] == "2026-09-01T10:00:00+02:00"
 
 
+def test_an_answer_at_the_edge_of_the_calendar_is_a_400_not_a_500(
+    boot_with_openflow: TestClient,
+) -> None:
+    """Regression: an answer of 31 December 9999 answered 500 from date arithmetic."""
+    body = json.dumps(_payload(start="9999-12-31 23:45 Europe/Berlin")).encode("utf-8")
+    r = boot_with_openflow.post("/api/v1/openflow", content=body, headers=_signed_headers(body))
+    assert r.status_code == 400, r.text
+    assert "range" in r.json()["detail"]
+
+
 def test_openflow_booking_is_written_to_the_database(
     boot_with_openflow: TestClient,
     database: Database,
@@ -218,6 +228,33 @@ def test_openflow_idempotent_replay_returns_stored_decision(
     assert r2.headers.get("Idempotent-Replay") == "true"
     assert r2.json()["intent_id"] == first_intent_id
     assert r2.json()["decision"] == first_decision
+
+
+def test_a_second_respondent_for_the_same_slot_is_judged_not_replayed(
+    boot_with_openflow: TestClient,
+    database: Database,
+) -> None:
+    """Regression: the key was ``of:<formId>:<start answer>`` alone.
+
+    Two different people picking the same time on the same form therefore shared one
+    idempotency key, so the second was answered with a replay of the *first* person's
+    booking — told it was accepted — and never recorded at all.
+    """
+    first = json.dumps(_payload(name="Ada Lovelace", email="ada@example.com")).encode()
+    second = json.dumps(_payload(name="Grace Hopper", email="grace@example.com")).encode()
+
+    r1 = boot_with_openflow.post("/api/v1/openflow", content=first, headers=_signed_headers(first))
+    r2 = boot_with_openflow.post(
+        "/api/v1/openflow", content=second, headers=_signed_headers(second)
+    )
+
+    assert r1.status_code == 201, r1.text
+    assert r2.headers.get("Idempotent-Replay") is None
+    assert r2.json()["intent_id"] != r1.json()["intent_id"]
+    assert r2.json()["decision"]["code"] == "SLOT_CONFLICT"
+    with database.read() as session:
+        names = sorted(row.requester_name for row in session.scalars(select(BookingIntent)))
+    assert names == ["Ada Lovelace", "Grace Hopper"]
 
 
 # --------------------------------------------------------------------------

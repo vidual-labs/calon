@@ -44,7 +44,10 @@ The model rejects unknown top-level fields, a `start` or `end` without a UTC off
 `timezone` that is not in the IANA database. All three are malformed rather than unbookable:
 they are answered with `422` and never become an intent, which keeps the audit log a record
 of real booking attempts rather than of typos. `DecisionCode.INVALID_INPUT` remains the
-backstop for a caller that builds a `BookingRequest` directly.
+backstop for a caller that builds a `BookingRequest` directly. A `start` or `end` within
+about a day of the calendar's limits (year 1 or year 9999) is refused the same way, by the
+booking service rather than the model: there is no room on the calendar for its duration
+and the window it is judged against.
 
 ### `BookingRequest`
 
@@ -138,7 +141,10 @@ pass the complete rule chain, stopping at the `max_advance_days` horizon.
 `timezone` is the **requester's**, and `start` and `end` are expressed in it, so a
 suggestion can be rendered without a further conversion. The grid is anchored to each day's
 `window_start` and stepped in local wall-clock time, so slots keep their alignment across a
-DST transition instead of drifting by an hour.
+DST transition instead of drifting by an hour. A slot's length is always elapsed time, so a
+slot that spans a transition still lasts exactly its duration. A wall-clock time the
+spring-forward gap skips is never offered; on the fall-back date each wall-clock time is
+offered once, at its first occurrence.
 
 Each candidate is re-checked against the *complete* chain rather than a cheaper subset. A
 suggestion that turns out to sit inside a blackout, or on top of another booking's buffer,
@@ -233,12 +239,12 @@ intake framework lands — adding a unique constraint later, against live data t
 already violate it, is a far worse migration than adding it up front.
 
 `decision_json` (added by migration 0002) stores the complete structured decision —
-`code`, `reason`, and `suggestions` — at the instant it is produced, for external-intake
-submissions. On an idempotent replay the route returns **this** value (re-validated into the
-public `DecisionOut` shape) rather than re-evaluating the rules, so a retry cannot change a
-stored outcome. Native submissions always write `NULL` here, because the native form has no
-replay semantics; their decision stays in the human-readable `decision_code` /
-`decision_reason` columns. See [ADR 0012](adr/0012-external-intake-final.md).
+`code`, `reason`, and `suggestions` — at the instant it is produced, for every submission.
+On an external-intake idempotent replay the route returns **this** value (re-validated into
+the public `DecisionOut` shape) rather than re-evaluating the rules, so a retry cannot change
+a stored outcome. Native submissions write it too, although the native API has no replay
+semantics; it stays `NULL` only for intents recorded before migration 0002. See
+[ADR 0012](adr/0012-external-intake-final.md).
 
 ### `booking`
 

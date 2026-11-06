@@ -1,7 +1,7 @@
 """The adapter contract and the framework it plugs into.
 
 ADR 0005's two-method contract lives here, together with the registry that hands one
-adapter to the ``/api/v1/intake/{source_slug}`` route. The contract is what keeps "there
+adapter to the ``/api/v1/{source_slug}`` route. The contract is what keeps "there
 is exactly one downstream code path" testable: native intake is one adapter among the
 others, and an external source cannot reach logic the native flow does not also exercise.
 
@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 if TYPE_CHECKING:
     from calon.config import SourceConfig as OperatorSourceConfig
     from calon.intake.signature import SourceConfig as SignatureSourceConfig
+
+from pydantic import ValidationError
 
 from calon.intake.signature import (
     IntakeParseError,
@@ -140,6 +142,18 @@ class HmacSourceAdapter:
             )
         except KeyError as exc:
             raise IntakeParseError(f"missing required field: {exc.args[0]!r}") from exc
+        except ValidationError as exc:
+            # The route turns only IntakeParseError into a 400, so a payload the canonical
+            # schema refuses (an unknown timezone, a start without an offset) must leave
+            # through it too, rather than escape as a 500.
+            raise IntakeParseError(
+                f"the payload does not fit the booking schema ({_fields_of(exc)})"
+            ) from exc
+
+
+def _fields_of(exc: ValidationError) -> str:
+    """The dotted names of the fields a validation error is about, for the 400 body."""
+    return ", ".join(".".join(str(part) for part in error["loc"]) for error in exc.errors())
 
 
 class SourceRegistry:

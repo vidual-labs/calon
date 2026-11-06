@@ -172,6 +172,7 @@ def test_a_partial_blackout_is_read_as_local_wall_clock_time(tmp_path: Path) -> 
         ('[availability]\nwindow_startt = "09:00"\n', "unrecognised key"),
         ("[avilability]\n", "unrecognised key"),
         ('[resource]\ntimezone = "CET/Berlin"\n', "unknown IANA timezone"),
+        ('[instance]\ntimezone = "Mars/Olympus_Mons"\n', "unknown IANA timezone"),
         ('[availability]\nwindow_start = "18:00"\nwindow_end = "09:00"\n', "earlier than"),
         ("[availability]\nmin_notice_min = -5\n", "must not be negative"),
         ("[availability]\nmax_advance_days = 0\n", "must be positive"),

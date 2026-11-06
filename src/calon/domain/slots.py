@@ -78,19 +78,24 @@ def suggest_slots(
     origin = max(now_utc + policy.min_notice, start_utc)
     horizon = now_utc + timedelta(days=policy.max_advance_days)
     finish_by = to_utc(until) if until is not None else None
-    if origin > horizon or (finish_by is not None and origin + duration > finish_by):
+    # Compared as durations rather than by adding ``duration`` to an instant: a request
+    # long enough to run past year 9999 must come back empty, not overflow.
+    if origin > horizon or (finish_by is not None and finish_by - origin < duration):
         return ()
 
     requester_tz = zone(request.timezone)
     found: list[SlotSuggestion] = []
 
     for candidate in _candidates(policy, duration, origin, horizon, finish_by):
+        # ``candidate`` is a UTC instant, so this is elapsed time: a slot that crosses a
+        # DST transition still lasts exactly ``duration``.
+        end = candidate + duration
         decision = evaluate(
             BookingRequest(
                 resource_slug=request.resource_slug,
                 start=candidate,
                 timezone=request.timezone,
-                end=candidate + duration,
+                end=end,
             ),
             resource=resource,
             policy=policy,
@@ -103,7 +108,7 @@ def suggest_slots(
             found.append(
                 SlotSuggestion(
                     start=candidate.astimezone(requester_tz),
-                    end=(candidate + duration).astimezone(requester_tz),
+                    end=end.astimezone(requester_tz),
                     timezone=request.timezone,
                 )
             )
@@ -120,7 +125,7 @@ def _candidates(
     horizon: datetime,
     finish_by: datetime | None,
 ) -> Iterator[datetime]:
-    """Yield grid-aligned start instants inside the booking window, in order.
+    """Yield grid-aligned start instants inside the booking window, in order, in UTC.
 
     The grid is anchored to each day's ``window_start`` and stepped in local wall-clock
     time, so a booking keeps its "quarter past the hour" alignment across a DST shift
@@ -144,14 +149,25 @@ def _candidates_on(
     finish_by: datetime | None,
 ) -> Iterator[datetime]:
     opens, closes = policy.window_bounds(day)
+    closes_utc = to_utc(closes)
     if finish_by is not None:
         # A caller asking about a window gets slots that fit inside it, not slots that
         # start inside it and run past the end.
-        closes = min(closes, finish_by)
-    candidate = opens
-    while candidate + duration <= closes:
-        if candidate > horizon:
+        closes_utc = min(closes_utc, finish_by)
+    tz = policy.tz
+    wall = opens
+    # Stepping ``wall`` adds to the local clock reading (both sides share one tzinfo);
+    # every comparison and the slot's end use the UTC instant it names, so a duration is
+    # always elapsed time even across a DST transition.
+    while True:
+        candidate = to_utc(wall)
+        if candidate.astimezone(tz).replace(tzinfo=None) != wall.replace(tzinfo=None):
+            # A wall-clock time the spring-forward gap skips never happens. It would name
+            # the same instant as a later grid point under a label no clock ever shows.
+            wall += policy.granularity
+            continue
+        if closes_utc - candidate < duration or candidate > horizon:
             return
         if candidate >= origin:
             yield candidate
-        candidate += policy.granularity
+        wall += policy.granularity

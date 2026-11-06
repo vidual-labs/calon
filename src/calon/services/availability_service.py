@@ -43,6 +43,8 @@ _MAX_SLOTS = 5_000
 
 _MARGIN = timedelta(days=1)
 
+_OUT_OF_RANGE = "the window asked about is outside the range calon can work with"
+
 
 class UnknownResourceError(LookupError):
     """No such bookable resource, or it is not accepting bookings."""
@@ -95,8 +97,11 @@ def find_availability(
     policy = repository.load_policy(session, resource_row.id)
     resource = repository.to_domain_resource(resource_row)
 
-    start_utc = to_utc(range_start)
-    end_utc = to_utc(range_end)
+    try:
+        start_utc = to_utc(range_start)
+        end_utc = to_utc(range_end)
+    except OverflowError as exc:
+        raise InvalidRangeError(_OUT_OF_RANGE) from exc
     _validate_range(start_utc, end_utc)
 
     zone_name = timezone or policy.timezone
@@ -107,7 +112,14 @@ def find_availability(
     if duration <= 0:
         raise InvalidRangeError("duration_min must be a positive number of minutes")
 
-    window = (start_utc - _MARGIN, end_utc + _MARGIN)
+    try:
+        window = (start_utc - _MARGIN, end_utc + _MARGIN)
+        request_end = start_utc + timedelta(minutes=duration)
+    except OverflowError as exc:
+        # Within a day of year 1 or 9999 there is no room for the margin, and a duration
+        # of millions of years has no end on the calendar at all.
+        raise InvalidRangeError(_OUT_OF_RANGE) from exc
+
     free_busy = (
         calendar_registry.free_busy(resource_slug, *window) if calendar_registry is not None else ()
     )
@@ -116,7 +128,7 @@ def find_availability(
             resource_slug=resource_slug,
             start=start_utc,
             timezone=zone_name,
-            end=start_utc + timedelta(minutes=duration),
+            end=request_end,
         ),
         resource=resource,
         policy=policy,

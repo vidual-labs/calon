@@ -1,4 +1,4 @@
-"""POST /api/v1/intake/{source_slug} — the one endpoint every external source submits to.
+"""POST /api/v1/{source_slug} — the one endpoint every external source submits to.
 
 The flow (``docs/external-intake.md``, ADR 0005):
 
@@ -113,18 +113,24 @@ async def intake(
 
     # --- fresh evaluation -----------------------------------------------------
     raw_payload = _decode_json(body)
-    result = _evaluate_with_write(
-        database,
-        intent=intent,
-        source=source_slug,
-        now=now,
-        raw_payload=raw_payload,
-        idempotency_key=key,
-        response_headers=response.headers,
-        source_slug=source_slug,
-        calendar_registry=calendar_registry,
-        instance_host=settings.instance_host,
-    )
+    try:
+        result = _evaluate_with_write(
+            database,
+            intent=intent,
+            source=source_slug,
+            now=now,
+            raw_payload=raw_payload,
+            idempotency_key=key,
+            response_headers=response.headers,
+            source_slug=source_slug,
+            calendar_registry=calendar_registry,
+            instance_host=settings.instance_host,
+        )
+    except booking_service.InstantOutOfRangeError as exc:
+        # A parse-level problem in all but name: the payload mapped onto an intent whose
+        # instants cannot be judged. Same 400 as any other unusable payload.
+        log.warning("intake.rejected_parse source=%s detail=%s", source_slug, exc)
+        return JSONResponse({"detail": str(exc)}, status_code=400)
     # _evaluate_with_write returns either a Submission (fresh) or a BookingResponse
     # (race-path replay). Distinguish by type.
     if isinstance(result, booking_service.Submission):

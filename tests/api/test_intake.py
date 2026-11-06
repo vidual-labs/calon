@@ -194,6 +194,13 @@ def test_the_calendar_uid_uses_the_instance_host_not_the_source_slug(
         assert not booking.ics_uid.endswith("@demo")
 
 
+def test_a_payload_the_schema_refuses_is_a_400_not_a_500(intake_client: TestClient) -> None:
+    payload = {**_payload(), "timezone": "Mars/Olympus_Mons"}
+    body = json.dumps(payload).encode("utf-8")
+    r = intake_client.post("/api/v1/demo", content=body, headers=_headers(body))
+    assert r.status_code == 400, r.text
+
+
 # --------------------------------------------------------------------------
 # Idempotency
 # --------------------------------------------------------------------------

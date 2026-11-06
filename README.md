@@ -14,14 +14,15 @@ handoff that works with any major calendar.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-> **Status: `0.1.0` (first release).** Phase 7 is complete — calon runs, exposes a public
+> **Status: `0.3.0`.** Phase 9 is complete — calon runs, exposes a public
 > booking form at `/book`, hands off accepted bookings to the requester's calendar (ICS +
 > Google / Outlook deeplinks + a login-gated `.ics` endpoint), includes a login-gated
 > operator panel, ships as a Docker container, and accepts signed booking requests from
 > external sources (`POST /api/v1/<slug>`). External-intake adapters ship behind a
 > source-adapter boundary; `0.1.0` shipped the boundary with a synthetic test source, and
-> `0.2.0` lands the first real provider adapter, **OpenFlow**. Do not use this in production
-> before hardening (TLS, `CALON_LOGIN`). See the [roadmap](#roadmap).
+> `0.2.0` lands the first real provider adapter, **OpenFlow**. `0.3.0` adds optional sync
+> with the resource's own Google Calendar or Microsoft 365 calendar. Do not use this in
+> production before hardening (TLS, `CALON_LOGIN`). See the [roadmap](#roadmap).
 
 ---
 
@@ -214,10 +215,12 @@ calon starts with **universal compatibility rather than deep integration**:
 2. **Provider deeplinks are a convenience layer.** One-click "add to Google Calendar" and
    "add to Outlook" links, offered alongside the ICS file and never instead of it.
 
-calon does **not** write to your calendar provider in the MVP. Direct provider writes
-require OAuth applications, consent screens, token storage and refresh, and vendor review —
+calon never writes to the **requester's** calendar provider. That would need OAuth
+applications, consent screens, per-user token storage and refresh, and vendor review —
 more work than the entire rest of the MVP, and the most likely thing to break unattended.
-They are deferred to a post-1.0, opt-in integration.
+The one provider write calon makes is opt-in and on the operator's side: a resource can be
+connected to its own Google Calendar or Microsoft 365 calendar, and accepted bookings are
+then written there (see [Calendar sync](#calendar-sync)). Without that, nothing changes.
 
 See [`docs/calendar-handoff.md`](docs/calendar-handoff.md).
 

@@ -80,15 +80,20 @@ def submit_booking(
     now = utcnow()
 
     with database.write() as session:
-        submission = booking_service.submit_intent(
-            session,
-            intent,
-            source=native.NATIVE_SOURCE,
-            now=now,
-            raw_payload=raw_payload,
-            instance_host=settings.instance_host,
-            calendar_registry=calendar_registry,
-        )
+        try:
+            submission = booking_service.submit_intent(
+                session,
+                intent,
+                source=native.NATIVE_SOURCE,
+                now=now,
+                raw_payload=raw_payload,
+                instance_host=settings.instance_host,
+                calendar_registry=calendar_registry,
+            )
+        except booking_service.InstantOutOfRangeError as exc:
+            # Malformed rather than unbookable, like a start without an offset: 422, and
+            # the raise rolls the transaction back so it never becomes an intent.
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
         handoff_context: _HandoffContext | None = None
         if submission.booking is not None:
